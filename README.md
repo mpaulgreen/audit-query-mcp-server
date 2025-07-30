@@ -72,11 +72,26 @@ go build -o audit-query-mcp-server .
 ./audit-query-mcp-server serve
 ```
 
+## Testing
+
+The OpenShift Audit Query MCP Server includes a comprehensive testing framework with multiple execution modes, unit tests, and integration tests. The testing suite is designed to validate all aspects of the system including command generation, validation, caching, parsing, and MCP protocol compliance.
+
+### Test Suite Overview
+
+The project includes **50+ test functions** across all packages with multiple execution modes:
+
+- **Unit Tests**: Individual component testing for each package
+- **Integration Tests**: End-to-end workflow testing
+- **Performance Tests**: Performance and scalability testing
+- **Security Tests**: Security validation and edge case testing
+- **Real Cluster Tests**: Actual OpenShift cluster connectivity testing
+
 ### Running Tests
 
-The project includes a comprehensive test suite with multiple execution modes:
+#### Using the Custom Test Runner
 
-#### Basic Test Execution
+The server provides a custom test runner with multiple execution modes:
+
 ```bash
 # Run all tests
 ./audit-query-mcp-server test -all
@@ -92,30 +107,252 @@ The project includes a comprehensive test suite with multiple execution modes:
 
 # Run with compact output
 ./audit-query-mcp-server test -compact -all
-```
-
-#### Available Test Categories
-- **core**: command-builder, validation, caching, parser
-- **integration**: mcp-protocol, integration, audit-trail
-- **patterns**: nlp-patterns, nlp-simple, command-syntax
-- **error**: error-handling
-- **cluster**: real-cluster
-- **fast**: All tests except slow integration tests
-- **slow**: mcp-protocol, integration, nlp-patterns
-
-#### Individual Test Options
-```bash
-# Test specific components
-./audit-query-mcp-server test command-builder validation caching
-
-# Test natural language patterns
-./audit-query-mcp-server test nlp-patterns nlp-simple
-
-# Test real cluster connectivity
-./audit-query-mcp-server test real-cluster
 
 # Show test help
 ./audit-query-mcp-server test -h
+```
+
+#### Test Command Options
+
+The test command supports the following options:
+
+- `-all`: Run all available tests
+- `-v`: Verbose output with detailed test information
+- `-skip-slow`: Skip slow tests (integration, mcp-protocol)
+- `-skip-integration`: Skip integration tests
+- `-compact`: Compact output (less verbose)
+- `-h`: Show detailed help information
+
+#### Available Test Categories
+
+- **core**: Core functionality (command-builder, validation, caching, parser)
+- **integration**: Integration tests (mcp-protocol, integration, audit-trail)
+- **patterns**: Pattern matching (nlp-patterns, nlp-simple, command-syntax)
+- **error**: Error handling (error-handling)
+- **cluster**: Cluster connectivity tests (real-cluster)
+- **fast**: Fast tests only (excludes slow tests)
+- **slow**: Slow tests only (mcp-protocol, integration, nlp-patterns)
+
+#### Individual Test Components
+
+- **command-builder**: Enhanced command builder functionality
+- **validation**: Robust validation patterns
+- **caching**: Improved caching mechanisms
+- **audit-trail**: Audit trail functionality
+- **parser**: Enhanced parser capabilities
+- **mcp-protocol**: Comprehensive MCP protocol (slow)
+- **integration**: Integration scenarios (slow)
+- **error-handling**: Error handling and recovery
+- **nlp-patterns**: Natural language patterns (comprehensive)
+- **nlp-simple**: Natural language patterns (simple)
+- **nlp-compact**: Natural language patterns (compact)
+- **command-syntax**: Command syntax validation
+- **real-cluster**: Real cluster connectivity test
+
+### Unit Testing with Go
+
+#### Running Go Unit Tests
+
+The project includes comprehensive unit tests for each package. You can run these using standard Go testing:
+
+```bash
+# Run all unit tests
+go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run tests for specific package
+go test ./commands
+go test ./validation
+go test ./parsing
+go test ./utils
+go test ./server
+go test ./types
+
+# Run tests with race detection
+go test -race ./...
+
+# Run tests with benchmarks
+go test -bench=. ./...
+```
+
+#### Available Unit Test Files
+
+The project includes unit tests for all major components:
+
+- `commands/builder_test.go` - Command builder functionality tests
+- `commands/filters_test.go` - Filter functionality tests
+- `validation/validator_test.go` - Input validation tests
+- `parsing/parser_test.go` - Audit log parsing tests
+- `utils/cache_test.go` - Caching mechanism tests
+- `utils/audit_trail_test.go` - Audit trail functionality tests
+- `utils/constants_test.go` - Constants and configuration tests
+- `server/mcp_handler_test.go` - MCP protocol handler tests
+- `server/server_test.go` - Server functionality tests
+- `types/types_test.go` - Data structure tests
+
+#### Test Examples
+
+```bash
+# Test command builder with specific test
+go test -v ./commands -run TestBuildAuditQuery
+
+# Test validation with coverage
+go test -cover ./validation
+
+# Test parsing with benchmarks
+go test -bench=. ./parsing
+
+# Test caching with race detection
+go test -race ./utils
+
+# Test server with specific test
+go test -v ./server -run TestNewAuditQueryMCPServer
+```
+
+### Integration Testing
+
+#### Real Cluster Testing
+
+The server includes integration tests that connect to actual OpenShift clusters:
+
+```bash
+# Test real cluster connectivity
+./audit-query-mcp-server test real-cluster
+
+# Run integration tests
+./audit-query-mcp-server test integration
+
+# Run MCP protocol tests
+./audit-query-mcp-server test mcp-protocol
+```
+
+#### Integration Test Requirements
+
+- OpenShift CLI (`oc`) installed and configured
+- Access to an OpenShift cluster with audit logging enabled
+- Proper authentication and permissions
+
+### Test Execution Modes
+
+#### Fast Mode
+```bash
+# Run only fast tests (excludes slow integration tests)
+./audit-query-mcp-server test -skip-slow
+go test ./commands ./validation ./utils ./types
+```
+
+#### Verbose Mode
+```bash
+# Run with detailed output
+./audit-query-mcp-server test -v -all
+go test -v ./...
+```
+
+#### Compact Mode
+```bash
+# Run with minimal output
+./audit-query-mcp-server test -compact -all
+```
+
+#### Coverage Mode
+```bash
+# Run with coverage analysis
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+### Test Help Output
+
+Running `./audit-query-mcp-server test -h` provides detailed information:
+
+```
+🧪 Audit Query MCP Server Test Suite
+=====================================
+
+Usage:
+  go run . test [options] [test-names...]
+
+Options:
+  -all              Run all tests
+  -v                Verbose output
+  -skip-slow        Skip slow tests (integration, mcp-protocol)
+  -skip-integration Skip integration tests
+  -compact          Compact output (less verbose)
+  -h                Show this help
+
+Test Categories:
+  core             - Core functionality (command-builder, validation, caching, parser)
+  integration      - Integration tests (mcp-protocol, integration, audit-trail)
+  patterns         - Pattern matching (nlp-patterns, nlp-simple, command-syntax)
+  error            - Error handling (error-handling)
+  cluster          - Cluster connectivity tests (real-cluster)
+  fast             - Fast tests only (excludes slow tests)
+  slow             - Slow tests only (mcp-protocol, integration, nlp-patterns)
+
+Available Tests:
+  command-builder   - Enhanced command builder functionality
+  validation        - Robust validation patterns
+  caching           - Improved caching mechanisms
+  audit-trail       - Audit trail functionality
+  parser            - Enhanced parser capabilities
+  mcp-protocol      - Comprehensive MCP protocol (slow)
+  integration       - Integration scenarios (slow)
+  error-handling    - Error handling and recovery
+  nlp-patterns      - Natural language patterns (comprehensive)
+  nlp-simple        - Natural language patterns (simple)
+  nlp-compact       - Natural language patterns (compact)
+  command-syntax    - Command syntax validation
+  real-cluster      - Real cluster connectivity test
+
+Examples:
+  go run . test -all                    # Run all tests
+  go run . test command-builder         # Run specific test
+  go run . test validation caching      # Run multiple tests
+  go run . test -skip-slow              # Run fast tests only
+  go run . test core                    # Run core tests
+  go run . test -v command-builder      # Verbose output
+  go run . test -compact command-builder # Compact output
+```
+
+### Test Development
+
+#### Adding New Tests
+
+When adding new functionality, include corresponding tests:
+
+1. **Unit Tests**: Add tests in the appropriate `*_test.go` file
+2. **Integration Tests**: Add to the custom test runner in `test_client.go`
+3. **Test Categories**: Update the `testCategories` map in `test_client.go`
+
+#### Test Best Practices
+
+- Write tests for all public functions
+- Include both positive and negative test cases
+- Test edge cases and error conditions
+- Use descriptive test names
+- Include benchmarks for performance-critical code
+- Maintain test coverage above 80%
+
+#### Running Tests in CI/CD
+
+```bash
+# Run all tests with coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
+
+# Run tests with race detection
+go test -race ./...
+
+# Run integration tests
+./audit-query-mcp-server test integration
+
+# Run security tests
+./audit-query-mcp-server test validation
 ```
 
 ## Usage
@@ -451,26 +688,7 @@ Performance optimizations include:
 - Rolling log file optimization
 - Complexity controls for command generation
 
-## Testing
 
-### Comprehensive Test Suite
-
-The project includes 50+ test functions across all packages:
-
-#### Test Categories
-- **Unit Tests**: Individual component testing
-- **Integration Tests**: End-to-end workflow testing
-- **Performance Tests**: Performance and scalability testing
-- **Security Tests**: Security validation and edge case testing
-
-- **Real Cluster Tests**: Actual OpenShift cluster connectivity testing
-
-#### Test Execution Modes
-- **Fast Mode**: Skip slow integration tests
-- **Verbose Mode**: Detailed test output
-- **Compact Mode**: Minimal test output
-- **Category Mode**: Run specific test categories
-- **Individual Mode**: Run specific test functions
 
 ## Monitoring
 
