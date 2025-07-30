@@ -565,28 +565,37 @@ func buildTimeframeFilter(timeframe string) string {
 
 // buildFlexibleTimeframeFilter handles dynamic timeframe patterns (legacy support)
 func buildFlexibleTimeframeFilter(timeframe string) string {
+	now := time.Now()
+
 	// Handle special cases first
 	switch timeframe {
 	case "today":
-		return fmt.Sprintf("| grep '$(date +%%Y-%%m-%%d)'")
+		return fmt.Sprintf("| grep '%s'", now.Format("2006-01-02"))
 	case "yesterday":
-		return fmt.Sprintf("| grep '$(date -v-1d +%%Y-%%m-%%d)'")
+		yesterday := now.AddDate(0, 0, -1)
+		return fmt.Sprintf("| grep '%s'", yesterday.Format("2006-01-02"))
 	case "this week":
-		return fmt.Sprintf("| grep '$(date +%%Y-%%m-%%d)'")
+		return fmt.Sprintf("| grep '%s'", now.Format("2006-01-02"))
 	case "last hour":
-		return fmt.Sprintf("| grep '$(date -v-1H +%%Y-%%m-%%d)'")
+		lastHour := now.Add(-1 * time.Hour)
+		return fmt.Sprintf("| grep '%s'", lastHour.Format("2006-01-02"))
 	case "24h", "last 24 hours":
-		return fmt.Sprintf("| grep '$(date -v-1d +%%Y-%%m-%%d)'")
+		last24h := now.AddDate(0, 0, -1)
+		return fmt.Sprintf("| grep '%s'", last24h.Format("2006-01-02"))
 	case "7d", "last 7 days":
-		return fmt.Sprintf("| grep '$(date -v-7d +%%Y-%%m-%%d)'")
+		last7d := now.AddDate(0, 0, -7)
+		return fmt.Sprintf("| grep '%s'", last7d.Format("2006-01-02"))
 	case "last week":
-		return fmt.Sprintf("| grep '$(date -v-7d +%%Y-%%m-%%d)'")
+		lastWeek := now.AddDate(0, 0, -7)
+		return fmt.Sprintf("| grep '%s'", lastWeek.Format("2006-01-02"))
 	case "this month":
-		return fmt.Sprintf("| grep '$(date +%%Y-%%m)'")
+		return fmt.Sprintf("| grep '%s'", now.Format("2006-01"))
 	case "last month":
-		return fmt.Sprintf("| grep '$(date -v-1m +%%Y-%%m)'")
+		lastMonth := now.AddDate(0, -1, 0)
+		return fmt.Sprintf("| grep '%s'", lastMonth.Format("2006-01"))
 	case "last 30 days":
-		return fmt.Sprintf("| grep '$(date -v-30d +%%Y-%%m-%%d)'")
+		last30d := now.AddDate(0, 0, -30)
+		return fmt.Sprintf("| grep '%s'", last30d.Format("2006-01-02"))
 	}
 
 	// Parse "last X minutes"
@@ -594,8 +603,9 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^last (\d+) minute(s)?$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 1 {
-			minutes := matches[1]
-			return fmt.Sprintf("| grep '$(date -v-%sM +%%Y-%%m-%%d)'", minutes)
+			minutes, _ := strconv.Atoi(matches[1])
+			lastMinutes := now.Add(-time.Duration(minutes) * time.Minute)
+			return fmt.Sprintf("| grep '%s'", lastMinutes.Format("2006-01-02"))
 		}
 	}
 
@@ -604,8 +614,9 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^last (\d+) hour(s)?$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 1 {
-			hours := matches[1]
-			return fmt.Sprintf("| grep '$(date -v-%sH +%%Y-%%m-%%d)'", hours)
+			hours, _ := strconv.Atoi(matches[1])
+			lastHours := now.Add(-time.Duration(hours) * time.Hour)
+			return fmt.Sprintf("| grep '%s'", lastHours.Format("2006-01-02"))
 		}
 	}
 
@@ -614,8 +625,9 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^last (\d+) day(s)?$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 1 {
-			days := matches[1]
-			return fmt.Sprintf("| grep '$(date -v-%sd +%%Y-%%m-%%d)'", days)
+			days, _ := strconv.Atoi(matches[1])
+			lastDays := now.AddDate(0, 0, -days)
+			return fmt.Sprintf("| grep '%s'", lastDays.Format("2006-01-02"))
 		}
 	}
 
@@ -624,11 +636,9 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^last (\d+) week(s)?$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 1 {
-			weeks := matches[1]
-			if weeksInt, err := strconv.Atoi(weeks); err == nil {
-				days := fmt.Sprintf("%d", 7*weeksInt)
-				return fmt.Sprintf("| grep '$(date -v-%sd +%%Y-%%m-%%d)'", days)
-			}
+			weeks, _ := strconv.Atoi(matches[1])
+			lastWeeks := now.AddDate(0, 0, -7*weeks)
+			return fmt.Sprintf("| grep '%s'", lastWeeks.Format("2006-01-02"))
 		}
 	}
 
@@ -637,8 +647,9 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^last (\d+) month(s)?$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 1 {
-			months := matches[1]
-			return fmt.Sprintf("| grep '$(date -v-%sm +%%Y-%%m)'", months)
+			months, _ := strconv.Atoi(matches[1])
+			lastMonths := now.AddDate(0, -months, 0)
+			return fmt.Sprintf("| grep '%s'", lastMonths.Format("2006-01"))
 		}
 	}
 
@@ -647,8 +658,9 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^last (\d+) year(s)?$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 1 {
-			years := matches[1]
-			return fmt.Sprintf("| grep '$(date -v-%sy +%%Y-%%m)'", years)
+			years, _ := strconv.Atoi(matches[1])
+			lastYears := now.AddDate(-years, 0, 0)
+			return fmt.Sprintf("| grep '%s'", lastYears.Format("2006-01"))
 		}
 	}
 
@@ -657,22 +669,24 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^(\d+)([mhdwy])$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 2 {
-			value := matches[1]
+			value, _ := strconv.Atoi(matches[1])
 			unit := matches[2]
 			switch unit {
 			case "m":
-				return fmt.Sprintf("| grep '$(date -v-%sM +%%Y-%%m-%%d)'", value)
+				lastMinutes := now.Add(-time.Duration(value) * time.Minute)
+				return fmt.Sprintf("| grep '%s'", lastMinutes.Format("2006-01-02"))
 			case "h":
-				return fmt.Sprintf("| grep '$(date -v-%sH +%%Y-%%m-%%d)'", value)
+				lastHours := now.Add(-time.Duration(value) * time.Hour)
+				return fmt.Sprintf("| grep '%s'", lastHours.Format("2006-01-02"))
 			case "d":
-				return fmt.Sprintf("| grep '$(date -v-%sd +%%Y-%%m-%%d)'", value)
+				lastDays := now.AddDate(0, 0, -value)
+				return fmt.Sprintf("| grep '%s'", lastDays.Format("2006-01-02"))
 			case "w":
-				if valueInt, err := strconv.Atoi(value); err == nil {
-					days := fmt.Sprintf("%d", 7*valueInt)
-					return fmt.Sprintf("| grep '$(date -v-%sd +%%Y-%%m-%%d)'", days)
-				}
+				lastWeeks := now.AddDate(0, 0, -7*value)
+				return fmt.Sprintf("| grep '%s'", lastWeeks.Format("2006-01-02"))
 			case "y":
-				return fmt.Sprintf("| grep '$(date -v-%sy +%%Y-%%m)'", value)
+				lastYears := now.AddDate(-value, 0, 0)
+				return fmt.Sprintf("| grep '%s'", lastYears.Format("2006-01"))
 			}
 		}
 	}
@@ -682,22 +696,24 @@ func buildFlexibleTimeframeFilter(timeframe string) string {
 		re := regexp.MustCompile(`^(\d+)([mhdwy]) ago$`)
 		matches := re.FindStringSubmatch(timeframe)
 		if len(matches) > 2 {
-			value := matches[1]
+			value, _ := strconv.Atoi(matches[1])
 			unit := matches[2]
 			switch unit {
 			case "m":
-				return fmt.Sprintf("| grep '$(date -v-%sM +%%Y-%%m-%%d)'", value)
+				lastMinutes := now.Add(-time.Duration(value) * time.Minute)
+				return fmt.Sprintf("| grep '%s'", lastMinutes.Format("2006-01-02"))
 			case "h":
-				return fmt.Sprintf("| grep '$(date -v-%sH +%%Y-%%m-%%d)'", value)
+				lastHours := now.Add(-time.Duration(value) * time.Hour)
+				return fmt.Sprintf("| grep '%s'", lastHours.Format("2006-01-02"))
 			case "d":
-				return fmt.Sprintf("| grep '$(date -v-%sd +%%Y-%%m-%%d)'", value)
+				lastDays := now.AddDate(0, 0, -value)
+				return fmt.Sprintf("| grep '%s'", lastDays.Format("2006-01-02"))
 			case "w":
-				if valueInt, err := strconv.Atoi(value); err == nil {
-					days := fmt.Sprintf("%d", 7*valueInt)
-					return fmt.Sprintf("| grep '$(date -v-%sd +%%Y-%%m-%%d)'", days)
-				}
+				lastWeeks := now.AddDate(0, 0, -7*value)
+				return fmt.Sprintf("| grep '%s'", lastWeeks.Format("2006-01-02"))
 			case "y":
-				return fmt.Sprintf("| grep '$(date -v-%sy +%%Y-%%m)'", value)
+				lastYears := now.AddDate(-value, 0, 0)
+				return fmt.Sprintf("| grep '%s'", lastYears.Format("2006-01"))
 			}
 		}
 	}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -13,12 +15,231 @@ import (
 	"audit-query-mcp-server/validation"
 )
 
+// TestConfig holds configuration for test execution
+type TestConfig struct {
+	RunAll          bool
+	TestNames       []string
+	Verbose         bool
+	SkipSlow        bool
+	SkipIntegration bool
+	ShowHelp        bool
+	Compact         bool // New option for compact output
+}
+
+// Available tests mapping
+var availableTests = map[string]func(){
+	"command-builder": TestEnhancedCommandBuilder,
+	"validation":      TestEnhancedValidation,
+	"caching":         TestEnhancedCaching,
+	"audit-trail":     TestAuditTrail,
+	"parser":          TestParserLimitations,
+	"mcp-protocol":    TestMCPProtocolComprehensive,
+	"integration":     TestIntegrationScenarios,
+	"error-handling":  TestErrorHandlingAndRecovery,
+	"nlp-patterns":    TestNaturalLanguagePatterns,
+	"nlp-simple":      TestNaturalLanguagePatternsSimple,
+	"nlp-compact":     TestNaturalLanguagePatternsCompact,
+	"command-syntax":  TestCommandSyntaxValidation,
+	"real-cluster":    TestRealClusterConnectivity,
+}
+
+// Test categories for better organization
+var testCategories = map[string][]string{
+	"core":        {"command-builder", "validation", "caching", "parser"},
+	"integration": {"mcp-protocol", "integration", "audit-trail"},
+	"patterns":    {"nlp-patterns", "nlp-simple", "command-syntax"},
+	"error":       {"error-handling"},
+	"cluster":     {"real-cluster"},
+	"fast":        {"command-builder", "validation", "caching", "audit-trail", "parser", "error-handling", "nlp-simple", "command-syntax"},
+	"slow":        {"mcp-protocol", "integration", "nlp-patterns"},
+}
+
 // truncateString truncates a string to the specified maximum length
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// parseTestArgs parses command line arguments for test configuration
+func parseTestArgs() *TestConfig {
+	config := &TestConfig{}
+
+	flag.BoolVar(&config.RunAll, "all", false, "Run all tests")
+	flag.BoolVar(&config.Verbose, "v", false, "Verbose output")
+	flag.BoolVar(&config.SkipSlow, "skip-slow", false, "Skip slow tests (integration, mcp-protocol)")
+	flag.BoolVar(&config.SkipIntegration, "skip-integration", false, "Skip integration tests")
+	flag.BoolVar(&config.ShowHelp, "h", false, "Show help")
+	flag.BoolVar(&config.Compact, "compact", false, "Compact output (less verbose)")
+
+	// Parse flags
+	flag.Parse()
+
+	// Get test names from remaining arguments
+	config.TestNames = flag.Args()
+
+	return config
+}
+
+// showTestHelp displays available tests and usage
+func showTestHelp() {
+	fmt.Println("🧪 Audit Query MCP Server Test Suite")
+	fmt.Println("=====================================")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  go run . test [options] [test-names...]")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  -all              Run all tests")
+	fmt.Println("  -v                Verbose output")
+	fmt.Println("  -skip-slow        Skip slow tests (integration, mcp-protocol)")
+	fmt.Println("  -skip-integration Skip integration tests")
+	fmt.Println("  -compact          Compact output (less verbose)")
+	fmt.Println("  -h                Show this help")
+	fmt.Println()
+	fmt.Println("Test Categories:")
+	fmt.Println("  core             - Core functionality (command-builder, validation, caching, parser)")
+	fmt.Println("  integration      - Integration tests (mcp-protocol, integration, audit-trail)")
+	fmt.Println("  patterns         - Pattern matching (nlp-patterns, nlp-simple, command-syntax)")
+	fmt.Println("  error            - Error handling (error-handling)")
+	fmt.Println("  cluster          - Cluster connectivity tests (real-cluster)")
+	fmt.Println("  fast             - Fast tests only (excludes slow tests)")
+	fmt.Println("  slow             - Slow tests only (mcp-protocol, integration, nlp-patterns)")
+	fmt.Println()
+	fmt.Println("Available Tests:")
+	fmt.Println("  command-builder   - Enhanced command builder functionality")
+	fmt.Println("  validation        - Robust validation patterns")
+	fmt.Println("  caching           - Improved caching mechanisms")
+	fmt.Println("  audit-trail       - Audit trail functionality")
+	fmt.Println("  parser            - Enhanced parser capabilities")
+	fmt.Println("  mcp-protocol      - Comprehensive MCP protocol (slow)")
+	fmt.Println("  integration       - Integration scenarios (slow)")
+	fmt.Println("  error-handling    - Error handling and recovery")
+	fmt.Println("  nlp-patterns      - Natural language patterns (comprehensive)")
+	fmt.Println("  nlp-simple        - Natural language patterns (simple)")
+	fmt.Println("  nlp-compact       - Natural language patterns (compact)")
+	fmt.Println("  command-syntax    - Command syntax validation")
+	fmt.Println("  real-cluster      - Real cluster connectivity test")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  go run . test -all                    # Run all tests")
+	fmt.Println("  go run . test command-builder         # Run specific test")
+	fmt.Println("  go run . test validation caching      # Run multiple tests")
+	fmt.Println("  go run . test -skip-slow              # Run fast tests only")
+	fmt.Println("  go run . test core                    # Run core tests")
+	fmt.Println("  go run . test -v command-builder      # Verbose output")
+	fmt.Println("  go run . test -compact command-builder # Compact output")
+	fmt.Println()
+}
+
+// runTests executes tests based on configuration
+func runTests(config *TestConfig) {
+	if config.ShowHelp {
+		showTestHelp()
+		return
+	}
+
+	// Determine which tests to run
+	var testsToRun []string
+
+	if config.RunAll {
+		// Run all tests
+		for testName := range availableTests {
+			if config.SkipSlow && (testName == "mcp-protocol" || testName == "integration") {
+				continue
+			}
+			if config.SkipIntegration && testName == "integration" {
+				continue
+			}
+			testsToRun = append(testsToRun, testName)
+		}
+	} else if len(config.TestNames) > 0 {
+		// Run specified tests or categories
+		for _, testName := range config.TestNames {
+			if categoryTests, isCategory := testCategories[testName]; isCategory {
+				// It's a category, add all tests in the category
+				for _, categoryTest := range categoryTests {
+					if config.SkipSlow && (categoryTest == "mcp-protocol" || categoryTest == "integration") {
+						continue
+					}
+					if config.SkipIntegration && categoryTest == "integration" {
+						continue
+					}
+					testsToRun = append(testsToRun, categoryTest)
+				}
+			} else if _, exists := availableTests[testName]; exists {
+				// It's a specific test
+				if config.SkipSlow && (testName == "mcp-protocol" || testName == "integration") {
+					fmt.Printf("⚠️  Skipping slow test: %s\n", testName)
+					continue
+				}
+				if config.SkipIntegration && testName == "integration" {
+					fmt.Printf("⚠️  Skipping integration test: %s\n", testName)
+					continue
+				}
+				testsToRun = append(testsToRun, testName)
+			} else {
+				fmt.Printf("❌ Unknown test or category: %s\n", testName)
+			}
+		}
+	} else {
+		// Default: run fast tests only
+		fastTests := testCategories["fast"]
+		for _, testName := range fastTests {
+			testsToRun = append(testsToRun, testName)
+		}
+	}
+
+	// Remove duplicates
+	testsToRun = removeDuplicates(testsToRun)
+
+	if len(testsToRun) == 0 {
+		fmt.Println("❌ No tests to run")
+		return
+	}
+
+	// Run tests
+	fmt.Printf("🚀 Running %d tests: %s\n", len(testsToRun), strings.Join(testsToRun, ", "))
+	fmt.Println()
+
+	startTime := time.Now()
+
+	for i, testName := range testsToRun {
+		if !config.Compact {
+			fmt.Printf("=== Test %d/%d: %s ===\n", i+1, len(testsToRun), testName)
+		}
+		testStart := time.Now()
+
+		// Run the test
+		availableTests[testName]()
+
+		testDuration := time.Since(testStart)
+		if config.Compact {
+			fmt.Printf("✅ %s: %v\n", testName, testDuration)
+		} else {
+			fmt.Printf("✅ %s completed in %v\n", testName, testDuration)
+			fmt.Println()
+		}
+	}
+
+	totalDuration := time.Since(startTime)
+	fmt.Printf("🎉 All tests completed in %v\n", totalDuration)
+}
+
+// removeDuplicates removes duplicate test names from a slice
+func removeDuplicates(tests []string) []string {
+	seen := make(map[string]bool)
+	result := []string{}
+
+	for _, test := range tests {
+		if !seen[test] {
+			seen[test] = true
+			result = append(result, test)
+		}
+	}
+
+	return result
 }
 
 // TestEnhancedCommandBuilder tests the enhanced command builder functionality
@@ -490,7 +711,7 @@ func TestMCPProtocolComprehensive() {
 
 	completeResponse := srv.HandleMCPRequest(completeRequest)
 	if completeResponse.Error != nil {
-		fmt.Printf("❌ [EXPECTED] Complete MCP request error (no OpenShift cluster): %v\n", completeResponse.Error)
+		fmt.Printf("❌ Complete MCP request error: %v\n", completeResponse.Error)
 	} else {
 		fmt.Printf("✅ Complete MCP request successful\n")
 		if result, ok := completeResponse.Result.(map[string]interface{}); ok {
@@ -578,12 +799,16 @@ func TestIntegrationScenarios() {
 
 	securityResult, err := srv.ExecuteCompleteAuditQuery(securityParams)
 	if err != nil {
-		fmt.Printf("❌ [EXPECTED] Security investigation error (no OpenShift cluster): %v\n", err)
+		fmt.Printf("❌ Security investigation error: %v\n", err)
 	} else {
 		fmt.Printf("✅ Security investigation completed\n")
 		fmt.Printf("✅ Query ID: %s\n", securityResult.QueryID)
 		fmt.Printf("✅ Command: %s\n", truncateString(securityResult.Command, 100))
-		fmt.Printf("✅ Results: %d entries\n", len(securityResult.ParsedData))
+		if len(securityResult.ParsedData) > 0 {
+			fmt.Printf("✅ Results: %d entries found\n", len(securityResult.ParsedData))
+		} else {
+			fmt.Printf("✅ Results: Query executed (no matching entries found)\n")
+		}
 		fmt.Printf("✅ Summary: %s\n", securityResult.Summary)
 	}
 
@@ -598,11 +823,15 @@ func TestIntegrationScenarios() {
 
 	authResult, err := srv.ExecuteCompleteAuditQuery(authParams)
 	if err != nil {
-		fmt.Printf("❌ [EXPECTED] Authentication analysis error (no OpenShift cluster): %v\n", err)
+		fmt.Printf("❌ Authentication analysis error: %v\n", err)
 	} else {
 		fmt.Printf("✅ Authentication analysis completed\n")
 		fmt.Printf("✅ Query ID: %s\n", authResult.QueryID)
-		fmt.Printf("✅ Results: %d entries\n", len(authResult.ParsedData))
+		if len(authResult.ParsedData) > 0 {
+			fmt.Printf("✅ Results: %d entries found\n", len(authResult.ParsedData))
+		} else {
+			fmt.Printf("✅ Results: Query executed (no matching entries found)\n")
+		}
 	}
 
 	// Scenario 3: Performance Monitoring
@@ -617,10 +846,15 @@ func TestIntegrationScenarios() {
 
 	perfResult, err := srv.ExecuteCompleteAuditQuery(perfParams)
 	if err != nil {
-		fmt.Printf("❌ [EXPECTED] Performance monitoring error (no OpenShift cluster): %v\n", err)
+		fmt.Printf("❌ Performance monitoring error: %v\n", err)
 	} else {
 		fmt.Printf("✅ Performance monitoring completed\n")
 		fmt.Printf("✅ Query ID: %s\n", perfResult.QueryID)
+		if len(perfResult.ParsedData) > 0 {
+			fmt.Printf("✅ Results: %d entries found\n", len(perfResult.ParsedData))
+		} else {
+			fmt.Printf("✅ Results: Query executed (no matching entries found)\n")
+		}
 		fmt.Printf("✅ Execution time: %dms\n", perfResult.ExecutionTime)
 	}
 
@@ -980,16 +1214,20 @@ func TestNaturalLanguagePatterns() {
 
 	result, err := srv.ExecuteCompleteAuditQuery(pattern1_1)
 	if err != nil {
-		fmt.Printf("❌ [EXPECTED] Execution error (no OpenShift cluster): %v\n", err)
+		fmt.Printf("❌ Execution error: %v\n", err)
 	} else {
 		fmt.Printf("✅ Execution successful\n")
 		fmt.Printf("✅ Query ID: %s\n", result.QueryID)
 		fmt.Printf("✅ Command executed: %s\n", truncateString(result.Command, 100))
 		fmt.Printf("✅ Raw output length: %d characters\n", len(result.RawOutput))
-		fmt.Printf("✅ Parsed entries: %d\n", len(result.ParsedData))
+		if len(result.ParsedData) > 0 {
+			fmt.Printf("✅ Parsed entries: %d found\n", len(result.ParsedData))
+		} else {
+			fmt.Printf("✅ Parsed entries: Query executed (no matching data found)\n")
+		}
 		fmt.Printf("✅ Summary: %s\n", result.Summary)
 		fmt.Printf("✅ Execution time: %dms\n", result.ExecutionTime)
-		fmt.Printf("ℹ️  Note: Data availability depends on OpenShift cluster audit logs\n")
+		fmt.Printf("ℹ️  Note: 'No matching data found' is normal when queries don't match existing audit logs\n")
 	}
 
 	// Test command generation for a few more patterns
@@ -998,19 +1236,31 @@ func TestNaturalLanguagePatterns() {
 	// Test pattern 1.2
 	result2, err2 := srv.ExecuteCompleteAuditQuery(pattern1_2)
 	if err2 != nil {
-		fmt.Printf("❌ [EXPECTED] Pattern 1.2 execution error (no OpenShift cluster): %v\n", err2)
+		fmt.Printf("❌ Pattern 1.2 execution error: %v\n", err2)
 	} else {
-		fmt.Printf("✅ Pattern 1.2 command generation successful\n")
+		fmt.Printf("✅ Pattern 1.2 execution successful\n")
+		fmt.Printf("✅ Query ID: %s\n", result2.QueryID)
 		fmt.Printf("✅ Generated command: %s\n", truncateString(result2.Command, 100))
+		if len(result2.ParsedData) > 0 {
+			fmt.Printf("✅ Found %d matching entries\n", len(result2.ParsedData))
+		} else {
+			fmt.Printf("✅ Query executed (no matching data found)\n")
+		}
 	}
 
 	// Test pattern 1.3
 	result3, err3 := srv.ExecuteCompleteAuditQuery(pattern1_3)
 	if err3 != nil {
-		fmt.Printf("❌ [EXPECTED] Pattern 1.3 execution error (no OpenShift cluster): %v\n", err3)
+		fmt.Printf("❌ Pattern 1.3 execution error: %v\n", err3)
 	} else {
-		fmt.Printf("✅ Pattern 1.3 command generation successful\n")
+		fmt.Printf("✅ Pattern 1.3 execution successful\n")
+		fmt.Printf("✅ Query ID: %s\n", result3.QueryID)
 		fmt.Printf("✅ Generated command: %s\n", truncateString(result3.Command, 100))
+		if len(result3.ParsedData) > 0 {
+			fmt.Printf("✅ Found %d matching entries\n", len(result3.ParsedData))
+		} else {
+			fmt.Printf("✅ Query executed (no matching data found)\n")
+		}
 	}
 
 	// Summary of pattern coverage
@@ -1031,6 +1281,109 @@ func TestNaturalLanguagePatterns() {
 	fmt.Println("- Time-based filtering handled in command generation")
 	fmt.Println("- Correlation patterns need advanced processing logic")
 	fmt.Println("- All patterns maintain safety through read-only commands")
+}
+
+// TestNaturalLanguagePatternsCompact is a simplified version that focuses on key patterns
+func TestNaturalLanguagePatternsCompact() {
+	fmt.Println("\n=== Natural Language Patterns (Compact) ===")
+	fmt.Println("Testing key natural language query patterns")
+
+	// Create server instance for testing
+	srv := server.NewAuditQueryMCPServer()
+
+	// Test key patterns only
+	keyPatterns := []struct {
+		name        string
+		query       string
+		params      types.AuditQueryParams
+		description string
+	}{
+		{
+			name:  "Basic CRD Query",
+			query: "Who deleted the customer CRD?",
+			params: types.AuditQueryParams{
+				LogSource: "kube-apiserver",
+				Patterns:  []string{"customresourcedefinition", "delete", "customer"},
+				Timeframe: "yesterday",
+				Exclude:   []string{"system:"},
+			},
+			description: "Basic resource deletion query",
+		},
+		{
+			name:  "User Activity",
+			query: "Show me all actions by user john.doe today",
+			params: types.AuditQueryParams{
+				LogSource: "kube-apiserver",
+				Patterns:  []string{},
+				Timeframe: "today",
+				Username:  "john.doe",
+			},
+			description: "User-specific activity query",
+		},
+		{
+			name:  "Authentication Failure",
+			query: "List all failed authentication attempts in the last hour",
+			params: types.AuditQueryParams{
+				LogSource: "oauth-server",
+				Patterns:  []string{"authentication", "failed"},
+				Timeframe: "1h",
+			},
+			description: "Security-focused authentication query",
+		},
+		{
+			name:  "Resource Management",
+			query: "Find all CustomResourceDefinition modifications this week",
+			params: types.AuditQueryParams{
+				LogSource: "kube-apiserver",
+				Patterns:  []string{"customresourcedefinition"},
+				Timeframe: "last_week",
+				Verb:      "create|update|patch|delete",
+			},
+			description: "Resource modification tracking",
+		},
+		{
+			name:  "Security Investigation",
+			query: "Find potential privilege escalation attempts",
+			params: types.AuditQueryParams{
+				LogSource: "kube-apiserver",
+				Patterns:  []string{"clusterrole", "rolebinding", "clusterrolebinding"},
+				Timeframe: "24h",
+				Exclude:   []string{"system:serviceaccount"},
+				Verb:      "create|update|patch",
+			},
+			description: "Security-focused privilege escalation detection",
+		},
+	}
+
+	fmt.Printf("Testing %d key patterns:\n", len(keyPatterns))
+
+	for i, pattern := range keyPatterns {
+		fmt.Printf("\n%d. %s: %s\n", i+1, pattern.name, pattern.query)
+		fmt.Printf("   Description: %s\n", pattern.description)
+
+		// Generate command
+		command := commands.BuildOcCommand(pattern.params)
+		fmt.Printf("   Command: %s\n", truncateString(command, 100))
+
+		// Test execution
+		result, err := srv.ExecuteCompleteAuditQuery(pattern.params)
+		if err != nil {
+			errMsg := err.Error()
+			if len(errMsg) > 50 {
+				errMsg = errMsg[:50] + "..."
+			}
+			fmt.Printf("   ❌ Execution failed: %s\n", errMsg)
+		} else {
+			if len(result.ParsedData) > 0 {
+				fmt.Printf("   ✅ Execution successful: %s (found %d results)\n", result.QueryID, len(result.ParsedData))
+			} else {
+				fmt.Printf("   ✅ Execution successful: %s (no data found)\n", result.QueryID)
+			}
+		}
+	}
+
+	fmt.Println("\n✅ Key pattern testing completed")
+	fmt.Println("ℹ️  Note: 'No data found' results are normal when queries don't match existing audit log data")
 }
 
 // TestNaturalLanguagePatternsSimple focuses on clearly displaying the natural language patterns
@@ -1311,7 +1664,7 @@ func analyzeCommandComplexity(command string) struct {
 	}
 }
 
-// RunAllTests runs all the enhanced test functions
+// RunAllTests runs all the enhanced test functions (legacy function for backward compatibility)
 func RunAllTests() {
 	fmt.Println("=== Enhanced Audit Query MCP Server Tests ===")
 	fmt.Println("Testing all improved components and integration scenarios")
@@ -1355,12 +1708,12 @@ func RunAllTests() {
 	fmt.Println()
 	fmt.Println("=== Test Result Legend ===")
 	fmt.Println("✅ [EXPECTED] - Test passed as expected (e.g., validation correctly rejected invalid input)")
-	fmt.Println("❌ [EXPECTED] - Test failed as expected (e.g., command execution failed because no OpenShift cluster)")
+	fmt.Println("❌ [EXPECTED] - Test failed as expected (e.g., validation correctly rejected invalid input)")
 	fmt.Println("✅ - Test passed successfully")
 	fmt.Println("❌ [UNEXPECTED] - Test failed unexpectedly (this would indicate a real problem)")
 	fmt.Println()
 	fmt.Println("Note: Many ❌ [EXPECTED] results are normal - they test error handling and show")
-	fmt.Println("that the system correctly handles invalid inputs or missing OpenShift clusters.")
+	fmt.Println("that the system correctly handles invalid inputs or validation failures.")
 	fmt.Println()
 	fmt.Println("Enhanced parser implementation:")
 	fmt.Println("1. ✅ JSON parsing instead of regex")
@@ -1373,4 +1726,96 @@ func RunAllTests() {
 	fmt.Println("- 18 patterns from PRD Section 7 documented and tested")
 	fmt.Println("- All patterns show translation to structured parameters")
 	fmt.Println("- Demonstrates system's capability to handle complex queries")
+}
+
+// RunTestsWithArgs runs tests with command line arguments
+func RunTestsWithArgs() {
+	config := parseTestArgs()
+	runTests(config)
+}
+
+// TestRealClusterConnectivity tests actual connectivity to a real OpenShift cluster
+func TestRealClusterConnectivity() {
+	fmt.Println("\n=== Real Cluster Connectivity Test ===")
+	fmt.Println("Testing actual connectivity to OpenShift cluster")
+
+	// First, check if oc is available
+	fmt.Println("\n--- Step 1: Checking oc availability ---")
+
+	// Test basic oc command
+	ocVersionCmd := exec.Command("oc", "version", "--client")
+	ocVersionOutput, err := ocVersionCmd.Output()
+	if err != nil {
+		fmt.Printf("❌ oc command not available: %v\n", err)
+		fmt.Println("ℹ️  This test requires oc to be installed and in PATH")
+		return
+	}
+	fmt.Printf("✅ oc is available:\n%s\n", string(ocVersionOutput))
+
+	// Test cluster connectivity
+	fmt.Println("\n--- Step 2: Testing cluster connectivity ---")
+
+	ocWhoamiCmd := exec.Command("oc", "whoami")
+	ocWhoamiOutput, err := ocWhoamiCmd.Output()
+	if err != nil {
+		fmt.Printf("❌ Not connected to cluster: %v\n", err)
+		fmt.Println("ℹ️  Please run 'oc login' to connect to your cluster")
+		return
+	}
+	fmt.Printf("✅ Connected to cluster as: %s\n", strings.TrimSpace(string(ocWhoamiOutput)))
+
+	// Test audit log access
+	fmt.Println("\n--- Step 3: Testing audit log access ---")
+
+	auditLogCmd := exec.Command("oc", "adm", "node-logs", "--role=master", "--path=kube-apiserver/audit.log")
+	auditLogOutput, err := auditLogCmd.Output()
+	if err != nil {
+		fmt.Printf("❌ Cannot access audit logs: %v\n", err)
+		fmt.Println("ℹ️  This might be due to insufficient permissions")
+		return
+	}
+
+	auditLogLines := strings.Split(string(auditLogOutput), "\n")
+	fmt.Printf("✅ Audit logs accessible: %d lines available\n", len(auditLogLines))
+
+	if len(auditLogLines) > 0 && len(auditLogLines[0]) > 0 {
+		fmt.Printf("✅ Sample audit log entry: %s...\n", truncateString(auditLogLines[0], 100))
+	}
+
+	// Test actual command execution through our system
+	fmt.Println("\n--- Step 4: Testing system integration ---")
+
+	srv := server.NewAuditQueryMCPServer()
+
+	// Test a simple query
+	testParams := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Patterns:  []string{"pods"},
+		Timeframe: "today",
+	}
+
+	fmt.Println("Executing test query through our system...")
+	result, err := srv.ExecuteCompleteAuditQuery(testParams)
+	if err != nil {
+		fmt.Printf("❌ System execution failed: %v\n", err)
+		fmt.Println("ℹ️  This might indicate an issue with the system's command execution")
+	} else {
+		fmt.Printf("✅ System execution successful!\n")
+		fmt.Printf("✅ Query ID: %s\n", result.QueryID)
+		fmt.Printf("✅ Command executed: %s\n", truncateString(result.Command, 100))
+		fmt.Printf("✅ Raw output length: %d characters\n", len(result.RawOutput))
+		fmt.Printf("✅ Parsed entries: %d\n", len(result.ParsedData))
+		if len(result.ParsedData) > 0 {
+			fmt.Printf("✅ Found %d matching audit log entries\n", len(result.ParsedData))
+		} else {
+			fmt.Printf("✅ Query executed successfully (no matching data found)\n")
+		}
+		fmt.Printf("✅ Execution time: %dms\n", result.ExecutionTime)
+
+		if len(result.ParsedData) > 0 {
+			fmt.Printf("✅ Sample parsed entry: %+v\n", result.ParsedData[0])
+		}
+	}
+
+	fmt.Println("\n✅ Real cluster connectivity test completed")
 }

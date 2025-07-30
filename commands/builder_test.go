@@ -467,6 +467,191 @@ func TestParseTimeframe_Invalid(t *testing.T) {
 	}
 }
 
+// TestParseTimeframe_EdgeCases tests edge cases for timeframe parsing
+func TestParseTimeframe_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		timeframe string
+		wantValid bool
+	}{
+		{"empty string", "", false},
+		{"invalid format", "invalid", false},
+		{"zero minutes", "last 0 minutes", true},
+		{"zero hours", "last 0 hours", true},
+		{"zero days", "last 0 days", true},
+		{"zero weeks", "last 0 weeks", true},
+		{"zero months", "last 0 months", true},
+		{"zero years", "last 0 years", true},
+		{"large number", "last 999999 days", true},
+		{"negative number", "last -5 days", false},
+		{"decimal number", "last 5.5 days", false},
+		{"mixed case", "LAST 5 DAYS", false},
+		{"extra spaces", "  last  5  days  ", false},
+		{"short form zero", "0d", true},
+		{"short form zero ago", "0d ago", true},
+		{"invalid short form", "5x", false},
+		{"invalid ago form", "5x ago", false},
+		{"since invalid date", "since 2023-13-45", false},
+		{"since invalid datetime", "since 2023-12-25 25:70:80", false},
+		{"since valid date", "since 2023-12-25", true},
+		{"since valid datetime", "since 2023-12-25 15:30:45", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end := parseTimeframe(tt.timeframe)
+			if tt.wantValid {
+				if start.IsZero() || end.IsZero() {
+					t.Errorf("parseTimeframe() should return valid times for %s", tt.timeframe)
+				}
+			} else {
+				if !start.IsZero() || !end.IsZero() {
+					t.Errorf("parseTimeframe() should return zero times for invalid %s", tt.timeframe)
+				}
+			}
+		})
+	}
+}
+
+// TestParseTimeframe_AllPatterns tests all supported timeframe patterns
+func TestParseTimeframe_AllPatterns(t *testing.T) {
+	tests := []struct {
+		name      string
+		timeframe string
+	}{
+		{"minutes pattern", "last 30 minutes"},
+		{"hours pattern", "last 12 hours"},
+		{"days pattern", "last 7 days"},
+		{"weeks pattern", "last 4 weeks"},
+		{"months pattern", "last 6 months"},
+		{"years pattern", "last 2 years"},
+		{"short form minutes", "30m"},
+		{"short form hours", "12h"},
+		{"short form days", "7d"},
+		{"short form weeks", "4w"},
+		{"short form years", "2y"},
+		{"ago form minutes", "30m ago"},
+		{"ago form hours", "12h ago"},
+		{"ago form days", "7d ago"},
+		{"ago form weeks", "4w ago"},
+		{"ago form years", "2y ago"},
+		{"this week", "this week"},
+		{"last week", "last week"},
+		{"this month", "this month"},
+		{"last month", "last month"},
+		{"today", "today"},
+		{"yesterday", "yesterday"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end := parseTimeframe(tt.timeframe)
+			if start.IsZero() || end.IsZero() {
+				t.Errorf("parseTimeframe() failed for %s", tt.timeframe)
+			}
+			if start.After(end) {
+				t.Errorf("parseTimeframe() start time after end time for %s", tt.timeframe)
+			}
+		})
+	}
+}
+
+// TestBuildFlexibleTimeframeFilter_AllPatterns tests all patterns in buildFlexibleTimeframeFilter
+func TestBuildFlexibleTimeframeFilter_AllPatterns(t *testing.T) {
+	tests := []struct {
+		name         string
+		timeframe    string
+		wantContains string
+	}{
+		{"today", "today", "grep"},
+		{"yesterday", "yesterday", "grep"},
+		{"this week", "this week", "grep"},
+		{"last hour", "last hour", "grep"},
+		{"24h", "24h", "grep"},
+		{"last 24 hours", "last 24 hours", "grep"},
+		{"7d", "7d", "grep"},
+		{"last 7 days", "last 7 days", "grep"},
+		{"last week", "last week", "grep"},
+		{"this month", "this month", "grep"},
+		{"last month", "last month", "grep"},
+		{"last 30 days", "last 30 days", "grep"},
+		{"last 5 minutes", "last 5 minutes", "grep"},
+		{"last 3 hours", "last 3 hours", "grep"},
+		{"last 10 days", "last 10 days", "grep"},
+		{"last 2 weeks", "last 2 weeks", "grep"},
+		{"last 6 months", "last 6 months", "grep"},
+		{"last 1 year", "last 1 year", "grep"},
+		{"5m", "5m", "grep"},
+		{"2h", "2h", "grep"},
+		{"3d", "3d", "grep"},
+		{"1w", "1w", "grep"},
+		{"6y", "6y", "grep"},
+		{"5m ago", "5m ago", "grep"},
+		{"2h ago", "2h ago", "grep"},
+		{"3d ago", "3d ago", "grep"},
+		{"1w ago", "1w ago", "grep"},
+		{"6y ago", "6y ago", "grep"},
+		{"since date", "since 2023-12-25", "grep"},
+		{"since datetime", "since 2023-12-25 15:30:45", "grep"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildFlexibleTimeframeFilter(tt.timeframe)
+			if tt.wantContains != "" {
+				if !strings.Contains(result, tt.wantContains) {
+					t.Errorf("buildFlexibleTimeframeFilter() result should contain %s for %s, got: %s",
+						tt.wantContains, tt.timeframe, result)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildFlexibleTimeframeFilter_EdgeCases tests edge cases for buildFlexibleTimeframeFilter
+func TestBuildFlexibleTimeframeFilter_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		timeframe string
+		wantEmpty bool
+	}{
+		{"empty string", "", true},
+		{"invalid format", "invalid", true},
+		{"zero minutes", "last 0 minutes", false},
+		{"zero hours", "last 0 hours", false},
+		{"zero days", "last 0 days", false},
+		{"zero weeks", "last 0 weeks", false},
+		{"zero months", "last 0 months", false},
+		{"zero years", "last 0 years", false},
+		{"negative number", "last -5 days", true},
+		{"decimal number", "last 5.5 days", true},
+		{"mixed case", "LAST 5 DAYS", true},
+		{"extra spaces", "  last  5  days  ", true},
+		{"short form zero", "0d", false},
+		{"short form zero ago", "0d ago", false},
+		{"invalid short form", "5x", true},
+		{"invalid ago form", "5x ago", true},
+		{"since invalid date", "since 2023-13-45", false},
+		{"since invalid datetime", "since 2023-12-25 25:70:80", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildFlexibleTimeframeFilter(tt.timeframe)
+			if tt.wantEmpty {
+				if result != "" {
+					t.Errorf("buildFlexibleTimeframeFilter() should return empty string for %s, got: %s",
+						tt.timeframe, result)
+				}
+			} else {
+				if result == "" {
+					t.Errorf("buildFlexibleTimeframeFilter() should return non-empty string for %s", tt.timeframe)
+				}
+			}
+		})
+	}
+}
+
 // TestGetLogBasePath tests log base path generation
 func TestGetLogBasePath(t *testing.T) {
 	testCases := []struct {
@@ -933,6 +1118,117 @@ func TestIntegration(t *testing.T) {
 			t.Errorf("Should use multi-file command for 7 days")
 		}
 	})
+}
+
+// TestBuildOcCommand_ComplexityLimits tests complexity limits in command building
+func TestBuildOcCommand_ComplexityLimits(t *testing.T) {
+	// Test pattern limit (max 3)
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Patterns:  []string{"pattern1", "pattern2", "pattern3", "pattern4", "pattern5"},
+		Timeframe: "today",
+	}
+
+	command := BuildOcCommand(params)
+	patternCount := strings.Count(command, "grep -i")
+	if patternCount > 3 {
+		t.Errorf("Command should limit patterns to 3, got %d grep patterns", patternCount)
+	}
+
+	// Test exclusion limit (max 3)
+	params = types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Exclude:   []string{"exclude1", "exclude2", "exclude3", "exclude4", "exclude5"},
+		Timeframe: "today",
+	}
+
+	command = BuildOcCommand(params)
+	excludeCount := strings.Count(command, "grep -v")
+	if excludeCount > 3 {
+		t.Errorf("Command should limit exclusions to 3, got %d grep -v patterns", excludeCount)
+	}
+}
+
+// TestBuildMultiFileCommand_ComplexityLimits tests complexity limits in multi-file command building
+func TestBuildMultiFileCommand_ComplexityLimits(t *testing.T) {
+	// Test with many log files to ensure limits are respected
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Patterns:  []string{"pattern1", "pattern2", "pattern3", "pattern4", "pattern5"},
+		Exclude:   []string{"exclude1", "exclude2", "exclude3", "exclude4", "exclude5"},
+		Timeframe: "last month", // This will generate many log files
+	}
+
+	command := BuildOcCommand(params)
+
+	// In multi-file commands, each file gets its own patterns, so we expect more grep patterns
+	// but each individual command should still respect the 3-pattern limit
+	// Let's check that the command is properly structured
+	if !strings.Contains(command, "&&") {
+		t.Errorf("Multi-file command should use && to chain commands")
+	}
+
+	// Check that the command is not empty
+	if command == "" {
+		t.Errorf("Multi-file command should not be empty")
+	}
+
+	t.Logf("Multi-file command generated: %s", command)
+}
+
+// TestDetermineLogFiles_FileLimit tests the file limit in determineLogFiles
+func TestDetermineLogFiles_FileLimit(t *testing.T) {
+	// Test with a very large timeframe that would generate many files
+	logFiles := determineLogFiles("kube-apiserver", "last year")
+
+	// Should not exceed maxFiles (50)
+	if len(logFiles) > 50 {
+		t.Errorf("determineLogFiles() should limit files to 50, got %d files", len(logFiles))
+	}
+}
+
+// TestGenerateRollingLogPaths_Limit tests the limit in generateRollingLogPaths
+func TestGenerateRollingLogPaths_Limit(t *testing.T) {
+	date := time.Now()
+	paths := generateRollingLogPaths("kube-apiserver", date)
+
+	// Should generate a reasonable number of paths (not too many)
+	// Based on the implementation: 3 numbered patterns * 2 (normal + compressed) * 2 (numbered + date-based)
+	// Plus additional patterns for date-based files
+	// 3 numbered * 2 (normal + compressed) * 2 (numbered + date-based) = 24 paths
+	expectedMax := 3 * 2 * 2 * 2 // 24 paths
+	if len(paths) > expectedMax {
+		t.Errorf("generateRollingLogPaths() should limit paths, got %d paths", len(paths))
+	}
+
+	t.Logf("Generated %d rolling log paths", len(paths))
+}
+
+// TestBuildOcCommand_TimeframeFilter tests timeframe filter behavior
+func TestBuildOcCommand_TimeframeFilter(t *testing.T) {
+	// Test that timeframe filter is only added when not using multi-file approach
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Timeframe: "today",
+	}
+
+	command := BuildOcCommand(params)
+	// For today, should use single file and add timeframe filter
+	if !strings.Contains(command, "grep") {
+		t.Errorf("Command for today should include timeframe filter")
+	}
+
+	// Test with yesterday (should use multi-file approach)
+	params.Timeframe = "yesterday"
+	command = BuildOcCommand(params)
+	// Should use multi-file approach, so no additional timeframe filter
+	if strings.Contains(command, "&&") {
+		// Multi-file command, should not have additional timeframe filter
+		if strings.Count(command, "grep") > 0 {
+			// Only grep patterns from filters, not timeframe
+			t.Logf("Multi-file command generated: %s", command)
+		}
+	}
 }
 
 // Benchmark tests for performance

@@ -23,7 +23,9 @@ func main() {
 
 	// Run tests if this is a test run
 	if len(os.Args) > 1 && os.Args[1] == "test" {
-		RunAllTests()
+		// Remove the "test" argument so flag.Parse() works correctly
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+		RunTestsWithArgs()
 		return
 	}
 
@@ -43,7 +45,7 @@ func showUsage() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  ./audit-query-mcp-server setup   - Run environment setup and validation")
-	fmt.Println("  ./audit-query-mcp-server test    - Run comprehensive tests")
+	fmt.Println("  ./audit-query-mcp-server test    - Run tests (use -h for options)")
 	fmt.Println("  ./audit-query-mcp-server serve   - Start HTTP server for testing")
 	fmt.Println("  ./audit-query-mcp-server         - Show this help message")
 	fmt.Println()
@@ -52,7 +54,16 @@ func showUsage() {
 	fmt.Println("  ./audit-query-mcp-server setup")
 	fmt.Println()
 	fmt.Println("  # Run all tests")
-	fmt.Println("  ./audit-query-mcp-server test")
+	fmt.Println("  ./audit-query-mcp-server test -all")
+	fmt.Println()
+	fmt.Println("  # Run specific tests")
+	fmt.Println("  ./audit-query-mcp-server test command-builder validation")
+	fmt.Println()
+	fmt.Println("  # Run fast tests only")
+	fmt.Println("  ./audit-query-mcp-server test -skip-slow")
+	fmt.Println()
+	fmt.Println("  # Show test help")
+	fmt.Println("  ./audit-query-mcp-server test -h")
 	fmt.Println()
 	fmt.Println("  # Start HTTP server for testing")
 	fmt.Println("  ./audit-query-mcp-server serve")
