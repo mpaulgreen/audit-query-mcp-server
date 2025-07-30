@@ -66,9 +66,13 @@ func ValidateQueryParams(params types.AuditQueryParams) error {
 
 // ValidateGeneratedCommand performs final safety validation
 func ValidateGeneratedCommand(command string) error {
-	// Check for dangerous commands
+	// Check for dangerous commands with whitelist exception for multi-file commands
 	for _, pattern := range utils.DangerousPatterns {
 		if strings.Contains(command, pattern) {
+			// Check if this is a safe multi-file command pattern
+			if isSafeMultiFileCommand(command, pattern) {
+				continue // Allow this specific pattern
+			}
 			return fmt.Errorf("command contains dangerous pattern: %s", pattern)
 		}
 	}
@@ -95,6 +99,109 @@ func ValidateGeneratedCommand(command string) error {
 	}
 
 	return nil
+}
+
+// isSafeMultiFileCommand validates if a command with dangerous patterns is a safe multi-file command
+func isSafeMultiFileCommand(command, dangerousPattern string) bool {
+	// Only allow && and ; patterns for multi-file commands
+	if dangerousPattern != "&&" && dangerousPattern != ";" {
+		return false
+	}
+
+	// Must be wrapped in parentheses
+	if !strings.HasPrefix(strings.TrimSpace(command), "(") || !strings.HasSuffix(strings.TrimSpace(command), ")") {
+		return false
+	}
+
+	// Split by the dangerous pattern to get individual commands
+	commands := strings.Split(command, dangerousPattern)
+	if len(commands) < 2 {
+		return false
+	}
+
+	// Validate each sub-command
+	for _, subCommand := range commands {
+		// Clean up the sub-command
+		subCommand = strings.TrimSpace(subCommand)
+		subCommand = strings.TrimPrefix(subCommand, "(")
+		subCommand = strings.TrimSuffix(subCommand, ")")
+
+		if subCommand == "" {
+			continue // Skip empty commands
+		}
+
+		// Each sub-command must be a safe oc adm node-logs command
+		if !isSafeOcAdmNodeLogsCommand(subCommand) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isSafeOcAdmNodeLogsCommand validates if a command is a safe oc adm node-logs command
+func isSafeOcAdmNodeLogsCommand(command string) bool {
+	command = strings.TrimSpace(command)
+
+	// Must start with oc adm node-logs
+	if !strings.HasPrefix(command, "oc adm node-logs") {
+		return false
+	}
+
+	// Must contain --role=master
+	if !strings.Contains(command, "--role=master") {
+		return false
+	}
+
+	// Must contain --path= with a valid log path
+	if !strings.Contains(command, "--path=") {
+		return false
+	}
+
+	// Check for valid log paths only
+	validLogPaths := []string{
+		"--path=kube-apiserver/",
+		"--path=oauth-server/",
+		"--path=openshift-apiserver/",
+		"--path=oauth-apiserver/",
+		"--path=audit/",
+	}
+
+	hasValidPath := false
+	for _, validPath := range validLogPaths {
+		if strings.Contains(command, validPath) {
+			hasValidPath = true
+			break
+		}
+	}
+
+	if !hasValidPath {
+		return false
+	}
+
+	// Must not contain any dangerous patterns (recursive check, but exclude the current pattern)
+	dangerousPatterns := []string{"oc delete", "oc apply", "oc create", "oc patch", "oc replace", "kubectl delete", "kubectl apply", "kubectl create", "kubectl patch", "kubectl replace", "`"}
+	for _, pattern := range dangerousPatterns {
+		if strings.Contains(command, pattern) {
+			return false
+		}
+	}
+
+	// Must not contain command substitution except for safe date patterns
+	if strings.Contains(command, "$(") {
+		isSafe := false
+		for _, safePattern := range utils.SafeDatePatterns {
+			if strings.Contains(command, safePattern) {
+				isSafe = true
+				break
+			}
+		}
+		if !isSafe {
+			return false
+		}
+	}
+
+	return true
 }
 
 // ValidateAuditResult validates an AuditResult instance

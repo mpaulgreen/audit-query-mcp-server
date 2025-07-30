@@ -1053,3 +1053,57 @@ func TestValidateTimeFrameConstant(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateGeneratedCommand_MultiFileCommands tests multi-file command validation
+func TestValidateGeneratedCommand_MultiFileCommands(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantErr bool
+	}{
+		{
+			name:    "Safe multi-file command with &&",
+			command: "(oc adm node-logs --role=master --path=kube-apiserver/audit.log | grep -i 'pods' && oc adm node-logs --role=master --path=kube-apiserver/audit.log.1 | grep -i 'pods')",
+			wantErr: false,
+		},
+		{
+			name:    "Safe multi-file command with ;",
+			command: "(oc adm node-logs --role=master --path=oauth-server/audit.log | grep -i 'auth' ; oc adm node-logs --role=master --path=oauth-server/audit.log.1 | grep -i 'auth')",
+			wantErr: false,
+		},
+		{
+			name:    "Dangerous multi-file command with delete",
+			command: "(oc adm node-logs --role=master --path=kube-apiserver/audit.log && oc delete pod test)",
+			wantErr: true,
+		},
+		{
+			name:    "Multi-file command without parentheses",
+			command: "oc adm node-logs --role=master --path=kube-apiserver/audit.log && oc adm node-logs --role=master --path=kube-apiserver/audit.log.1",
+			wantErr: true,
+		},
+		{
+			name:    "Multi-file command with invalid log path",
+			command: "(oc adm node-logs --role=master --path=/etc/passwd && oc adm node-logs --role=master --path=kube-apiserver/audit.log)",
+			wantErr: true,
+		},
+		{
+			name:    "Multi-file command without --role=master",
+			command: "(oc adm node-logs --path=kube-apiserver/audit.log && oc adm node-logs --path=kube-apiserver/audit.log.1)",
+			wantErr: true,
+		},
+		{
+			name:    "Single file command (should pass)",
+			command: "oc adm node-logs --role=master --path=kube-apiserver/audit.log | grep -i 'pods'",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateGeneratedCommand(tt.command)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateGeneratedCommand() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
