@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 // AuditQueryParams represents the structured parameters for audit queries
 type AuditQueryParams struct {
 	LogSource string   `json:"log_source"`
@@ -123,5 +125,126 @@ func DefaultParserConfiguration() ParserConfiguration {
 		EnableLegacy:  true,
 		EnableMetrics: true,
 		MaxBatchSize:  10000,
+	}
+}
+
+// AuditQueryConfig represents configuration for audit queries
+type AuditQueryConfig struct {
+	MaxRotatedFiles      int           `json:"max_rotated_files" default:"3"`
+	CommandTimeout       time.Duration `json:"command_timeout" default:"30s"`
+	UseJSONParsing       bool          `json:"use_json_parsing" default:"false"`
+	EnableCompression    bool          `json:"enable_compression" default:"false"`
+	ParallelProcessing   bool          `json:"parallel_processing" default:"false"`
+	ForceSimple          bool          `json:"force_simple" default:"true"` // New default for reliability
+	EnableFileDiscovery  bool          `json:"enable_file_discovery" default:"false"`
+	MaxConcurrentQueries int           `json:"max_concurrent_queries" default:"5"`
+}
+
+// EnvironmentInfo represents information about the OpenShift environment
+type EnvironmentInfo struct {
+	OpenShiftVersion string   `json:"openshift_version"`
+	JQAvailable      bool     `json:"jq_available"`
+	LogFormats       []string `json:"log_formats"`
+	AvailableFiles   []string `json:"available_files"`
+	MaxConcurrentOC  int      `json:"max_concurrent_oc"`
+	PermissionLevel  string   `json:"permission_level"`
+}
+
+// MigrationConfig represents configuration for the migration strategy
+type MigrationConfig struct {
+	// Feature flags for gradual rollout
+	EnableNewBuilder    bool `json:"enable_new_builder" default:"false"`
+	EnableFileDiscovery bool `json:"enable_file_discovery" default:"false"`
+	EnableJSONParsing   bool `json:"enable_json_parsing" default:"false"`
+	EnableParallelProc  bool `json:"enable_parallel_proc" default:"false"`
+
+	// Safety limits
+	MaxFiles             int           `json:"max_files" default:"3"`
+	CommandTimeout       time.Duration `json:"command_timeout" default:"30s"`
+	MaxConcurrentQueries int           `json:"max_concurrent_queries" default:"5"`
+
+	// Backward compatibility
+	PreserveOldBehavior bool `json:"preserve_old_behavior" default:"true"`
+	FallbackOnError     bool `json:"fallback_on_error" default:"true"`
+}
+
+// CircuitBreaker represents a circuit breaker pattern for command execution
+type CircuitBreaker struct {
+	FailureThreshold int           `json:"failure_threshold"`
+	ResetTimeout     time.Duration `json:"reset_timeout"`
+	State            CircuitState  `json:"state"`
+	FailureCount     int           `json:"failure_count"`
+	LastFailureTime  time.Time     `json:"last_failure_time"`
+}
+
+// CircuitState represents the state of a circuit breaker
+type CircuitState string
+
+const (
+	CircuitStateClosed   CircuitState = "closed"
+	CircuitStateOpen     CircuitState = "open"
+	CircuitStateHalfOpen CircuitState = "half_open"
+)
+
+// LogFileInfo represents information about a log file
+type LogFileInfo struct {
+	Path      string    `json:"path"`
+	Date      time.Time `json:"date"`
+	IsCurrent bool      `json:"is_current"`
+	Exists    bool      `json:"exists"`
+	Size      int64     `json:"size"`
+}
+
+// FileDiscoveryCache represents a cache for file discovery results
+type FileDiscoveryCache struct {
+	Cache     map[string][]string `json:"cache"`
+	LastCheck time.Time           `json:"last_check"`
+	TTL       time.Duration       `json:"ttl"`
+}
+
+// DiscoveryConfig represents configuration for file discovery
+type DiscoveryConfig struct {
+	EnableDiscovery bool          `json:"enable_discovery" default:"false"`
+	CacheTTL        time.Duration `json:"cache_ttl" default:"5m"`
+	MaxFilesToCheck int           `json:"max_files_to_check" default:"5"`
+	FallbackFiles   []string      `json:"fallback_files"`
+}
+
+// DefaultAuditQueryConfig returns the default audit query configuration
+func DefaultAuditQueryConfig() AuditQueryConfig {
+	return AuditQueryConfig{
+		MaxRotatedFiles:      3,
+		CommandTimeout:       30 * time.Second,
+		UseJSONParsing:       false,
+		EnableCompression:    false,
+		ParallelProcessing:   false,
+		ForceSimple:          true, // Default to simple for reliability
+		EnableFileDiscovery:  false,
+		MaxConcurrentQueries: 5,
+	}
+}
+
+// DefaultMigrationConfig returns the default migration configuration
+func DefaultMigrationConfig() MigrationConfig {
+	return MigrationConfig{
+		EnableNewBuilder:     false,
+		EnableFileDiscovery:  false,
+		EnableJSONParsing:    false,
+		EnableParallelProc:   false,
+		MaxFiles:             3,
+		CommandTimeout:       30 * time.Second,
+		MaxConcurrentQueries: 5,
+		PreserveOldBehavior:  true,
+		FallbackOnError:      true,
+	}
+}
+
+// DefaultDiscoveryConfig returns the default discovery configuration
+func DefaultDiscoveryConfig() DiscoveryConfig {
+	return DiscoveryConfig{
+		EnableDiscovery: false,
+		CacheTTL:        5 * time.Minute,
+		MaxFilesToCheck: 5,
+		FallbackFiles:   []string{"audit.log", "audit.log.1", "audit.log.2"},
 	}
 }

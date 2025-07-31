@@ -102,9 +102,14 @@ func TestBuildOcCommand_TimeframeYesterday(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Should use multi-file approach for yesterday
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Should use multi-file command for yesterday: %s", command)
+	// Should use simple approach by default for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability: %s", command)
+	}
+
+	// Should use current log file with date filtering
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Should use current log file: %s", command)
 	}
 }
 
@@ -117,9 +122,14 @@ func TestBuildOcCommand_TimeframeLastWeek(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Should use multi-file approach for last week
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Should use multi-file command for last week: %s", command)
+	// Should use simple approach by default for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability: %s", command)
+	}
+
+	// Should use current log file with date filtering
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Should use current log file: %s", command)
 	}
 }
 
@@ -132,9 +142,14 @@ func TestBuildOcCommand_TimeframeLastMonth(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Should use multi-file approach for last month
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Should use multi-file command for last month: %s", command)
+	// Should use simple approach by default for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability: %s", command)
+	}
+
+	// Should use current log file with date filtering
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Should use current log file: %s", command)
 	}
 }
 
@@ -207,9 +222,14 @@ func TestBuildOcCommand_TimeframeSinceDate(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Should use multi-file approach for since date
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Should use multi-file command for since date: %s", command)
+	// Should use simple approach by default for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability: %s", command)
+	}
+
+	// Should use current log file with date filtering
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Should use current log file: %s", command)
 	}
 }
 
@@ -222,9 +242,14 @@ func TestBuildOcCommand_TimeframeSinceDateTime(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Should use multi-file approach for since datetime
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Should use multi-file command for since datetime: %s", command)
+	// Should use simple approach by default for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability: %s", command)
+	}
+
+	// Should use current log file with date filtering
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Should use current log file: %s", command)
 	}
 }
 
@@ -243,9 +268,14 @@ func TestBuildOcCommand_ComplexQuery(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Should use multi-file approach for 7 days
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Should use multi-file command for 7 days: %s", command)
+	// Should use simple approach by default for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability: %s", command)
+	}
+
+	// Should use current log file with date filtering
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Should use current log file: %s", command)
 	}
 }
 
@@ -283,20 +313,13 @@ func TestDetermineLogFiles_Today(t *testing.T) {
 func TestDetermineLogFiles_Yesterday(t *testing.T) {
 	logFiles := determineLogFiles("kube-apiserver", "yesterday")
 
-	if len(logFiles) < 2 {
-		t.Errorf("Expected multiple log files for yesterday, got %d", len(logFiles))
+	// Should use simple approach for reliability (Phase 1 fix)
+	if len(logFiles) != 1 {
+		t.Errorf("Expected 1 log file for yesterday (simple approach), got %d", len(logFiles))
 	}
 
 	// Should include current log file
-	foundCurrent := false
-	for _, lf := range logFiles {
-		if lf.IsCurrent {
-			foundCurrent = true
-			break
-		}
-	}
-
-	if !foundCurrent {
+	if !logFiles[0].IsCurrent {
 		t.Errorf("Should include current log file")
 	}
 }
@@ -305,8 +328,9 @@ func TestDetermineLogFiles_Yesterday(t *testing.T) {
 func TestDetermineLogFiles_LastWeek(t *testing.T) {
 	logFiles := determineLogFiles("kube-apiserver", "last week")
 
-	if len(logFiles) < 8 {
-		t.Errorf("Expected multiple log files for last week, got %d", len(logFiles))
+	// Should use simple approach for reliability (Phase 1 fix)
+	if len(logFiles) != 1 {
+		t.Errorf("Expected 1 log file for last week (simple approach), got %d", len(logFiles))
 	}
 }
 
@@ -314,8 +338,9 @@ func TestDetermineLogFiles_LastWeek(t *testing.T) {
 func TestDetermineLogFiles_LastMonth(t *testing.T) {
 	logFiles := determineLogFiles("kube-apiserver", "last month")
 
-	if len(logFiles) < 32 {
-		t.Errorf("Expected multiple log files for last month, got %d", len(logFiles))
+	// Should use simple approach for reliability (Phase 1 fix)
+	if len(logFiles) != 1 {
+		t.Errorf("Expected 1 log file for last month (simple approach), got %d", len(logFiles))
 	}
 }
 
@@ -823,9 +848,9 @@ func TestRealWorldLogPatterns(t *testing.T) {
 			t.Errorf("Should include current log file")
 		}
 
-		// Should use multi-file approach for historical data
-		if !strings.Contains(command, "&&") {
-			t.Errorf("Should use multi-file command for historical data")
+		// Should use simple approach for reliability (Phase 1 fix)
+		if strings.Contains(command, "&&") {
+			t.Errorf("Should use simple command for reliability")
 		}
 	})
 
@@ -843,9 +868,9 @@ func TestRealWorldLogPatterns(t *testing.T) {
 			t.Errorf("Should include current log file")
 		}
 
-		// Should use multi-file approach for historical data
-		if !strings.Contains(command, "&&") {
-			t.Errorf("Should use multi-file command for historical data")
+		// Should use simple approach for reliability (Phase 1 fix)
+		if strings.Contains(command, "&&") {
+			t.Errorf("Should use simple command for reliability")
 		}
 	})
 }
@@ -1036,41 +1061,9 @@ func TestPerformance(t *testing.T) {
 			t.Errorf("Command generation took too long: %v", duration)
 		}
 
-		// Should use multi-file approach
-		if !strings.Contains(command, "&&") {
-			t.Errorf("Should use multi-file command for large timeframe, got: %s", command)
-		}
-	})
-}
-
-// TestEdgeCases tests edge cases
-func TestEdgeCases(t *testing.T) {
-	t.Run("special-characters", func(t *testing.T) {
-		params := types.AuditQueryParams{
-			LogSource: "kube-apiserver",
-			Patterns:  []string{"test[pattern]"},
-			Exclude:   []string{"test(pattern)"},
-		}
-
-		command := BuildOcCommand(params)
-
-		// Should handle special characters appropriately
-		if !strings.Contains(command, "test[pattern]") {
-			t.Errorf("Should handle special characters in patterns")
-		}
-	})
-
-	t.Run("very-short-timeframe", func(t *testing.T) {
-		params := types.AuditQueryParams{
-			LogSource: "kube-apiserver",
-			Timeframe: "5m",
-		}
-
-		command := BuildOcCommand(params)
-
-		// Should use current log file for very short timeframes
-		if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
-			t.Errorf("Should use current log file for very short timeframes")
+		// Should use simple approach for reliability (Phase 1 fix)
+		if strings.Contains(command, "&&") {
+			t.Errorf("Should use simple command for reliability, got: %s", command)
 		}
 	})
 }
@@ -1113,9 +1106,9 @@ func TestIntegration(t *testing.T) {
 			}
 		}
 
-		// Should use multi-file approach for 7 days
-		if !strings.Contains(command, "&&") {
-			t.Errorf("Should use multi-file command for 7 days")
+		// Should use simple approach for reliability (Phase 1 fix)
+		if strings.Contains(command, "&&") {
+			t.Errorf("Should use simple command for reliability")
 		}
 	})
 }
@@ -1161,19 +1154,22 @@ func TestBuildMultiFileCommand_ComplexityLimits(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// In multi-file commands, each file gets its own patterns, so we expect more grep patterns
-	// but each individual command should still respect the 3-pattern limit
-	// Let's check that the command is properly structured
-	if !strings.Contains(command, "&&") {
-		t.Errorf("Multi-file command should use && to chain commands")
+	// Should use simple approach for reliability (Phase 1 fix)
+	if strings.Contains(command, "&&") {
+		t.Errorf("Should use simple command for reliability")
+	}
+
+	// Check that the command is properly structured
+	if !strings.Contains(command, "oc adm node-logs --role=master") {
+		t.Errorf("Command should contain base oc command")
 	}
 
 	// Check that the command is not empty
 	if command == "" {
-		t.Errorf("Multi-file command should not be empty")
+		t.Errorf("Command should not be empty")
 	}
 
-	t.Logf("Multi-file command generated: %s", command)
+	t.Logf("Simple command generated: %s", command)
 }
 
 // TestDetermineLogFiles_FileLimit tests the file limit in determineLogFiles

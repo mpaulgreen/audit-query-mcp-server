@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"audit-query-mcp-server/types"
+	"os/exec"
 )
 
 // LogFileInfo represents information about a log file
@@ -17,27 +18,100 @@ type LogFileInfo struct {
 	IsCurrent bool
 }
 
+// CommandBuilder represents the new command builder for Phase 1 migration
+type CommandBuilder struct {
+	Config    types.AuditQueryConfig
+	Migration types.MigrationConfig
+	Discovery types.DiscoveryConfig
+	Cache     *types.FileDiscoveryCache
+	Circuit   *types.CircuitBreaker
+}
+
+// NewCommandBuilder creates a new command builder with default configuration
+func NewCommandBuilder() *CommandBuilder {
+	return &CommandBuilder{
+		Config:    types.DefaultAuditQueryConfig(),
+		Migration: types.DefaultMigrationConfig(),
+		Discovery: types.DefaultDiscoveryConfig(),
+		Cache: &types.FileDiscoveryCache{
+			Cache: make(map[string][]string),
+			TTL:   5 * time.Minute,
+		},
+		Circuit: &types.CircuitBreaker{
+			FailureThreshold: 3,
+			ResetTimeout:     30 * time.Second,
+			State:            types.CircuitStateClosed,
+		},
+	}
+}
+
 // BuildOcCommand constructs the oc command based on parameters with support for rolling logs
+// This is the legacy function that maintains backward compatibility
 func BuildOcCommand(params types.AuditQueryParams) string {
+	// Use the new command builder with default configuration
+	builder := NewCommandBuilder()
+	return builder.BuildOptimalCommand(params)
+}
+
+// BuildOcCommandWithConfig constructs the oc command with custom configuration
+func BuildOcCommandWithConfig(params types.AuditQueryParams, config types.AuditQueryConfig) string {
+	builder := NewCommandBuilder()
+	builder.Config = config
+	return builder.BuildOptimalCommand(params)
+}
+
+// BuildOptimalCommand builds the optimal command based on parameters and configuration
+func (cb *CommandBuilder) BuildOptimalCommand(params types.AuditQueryParams) string {
+	// Check circuit breaker state
+	if cb.Circuit.State == types.CircuitStateOpen {
+		if time.Since(cb.Circuit.LastFailureTime) < cb.Circuit.ResetTimeout {
+			// Use fallback command when circuit breaker is open
+			return cb.buildFallbackCommand(params)
+		}
+		// Reset to half-open
+		cb.Circuit.State = types.CircuitStateHalfOpen
+	}
+
+	// Always start with simple approach for reliability (Phase 1 fix)
+	if cb.shouldUseSimpleCommand(params) {
+		return cb.buildSimpleCommand(params)
+	}
+
+	// Only use multi-file if specifically requested and safe
+	if cb.shouldUseMultiFile(params) {
+		return cb.buildErrorTolerantMultiFileCommand(params)
+	}
+
+	return cb.buildFallbackCommand(params)
+}
+
+// shouldUseSimpleCommand determines if we should use simple command approach
+func (cb *CommandBuilder) shouldUseSimpleCommand(params types.AuditQueryParams) bool {
+	// Use simple for recent timeframes or when specifically requested
+	return params.Timeframe == "today" ||
+		params.Timeframe == "1h" ||
+		params.Timeframe == "" ||
+		cb.Config.ForceSimple ||
+		cb.Migration.PreserveOldBehavior
+}
+
+// shouldUseMultiFile determines if we should use multi-file approach
+func (cb *CommandBuilder) shouldUseMultiFile(params types.AuditQueryParams) bool {
+	// Only use multi-file if explicitly enabled and safe
+	return cb.Migration.EnableNewBuilder &&
+		!cb.Config.ForceSimple &&
+		cb.Migration.MaxFiles > 1
+}
+
+// buildSimpleCommand builds a simple, reliable command
+func (cb *CommandBuilder) buildSimpleCommand(params types.AuditQueryParams) string {
 	var parts []string
 
 	// Base command
 	parts = append(parts, "oc adm node-logs --role=master")
+	parts = append(parts, getDefaultLogPath(params.LogSource))
 
-	// Determine log files to query based on timeframe
-	logFiles := determineLogFiles(params.LogSource, params.Timeframe)
-
-	// Build command for multiple log files if needed
-	if len(logFiles) > 1 {
-		return buildMultiFileCommand(params, logFiles)
-	} else if len(logFiles) == 1 {
-		parts = append(parts, logFiles[0].Path)
-	} else {
-		// Fallback to current log file
-		parts = append(parts, getDefaultLogPath(params.LogSource))
-	}
-
-	// Add grep patterns with complexity control
+	// Add filters with complexity control
 	if len(params.Patterns) > 0 {
 		// Limit to first 3 patterns to avoid complexity
 		maxPatterns := 3
@@ -49,7 +123,7 @@ func BuildOcCommand(params types.AuditQueryParams) string {
 		}
 	}
 
-	// Add username filter with comprehensive pattern support
+	// Add username filter
 	if params.Username != "" {
 		usernameFilter := BuildUsernameFilter(params.Username)
 		if usernameFilter != "" {
@@ -57,7 +131,7 @@ func BuildOcCommand(params types.AuditQueryParams) string {
 		}
 	}
 
-	// Add resource filter with comprehensive pattern support
+	// Add resource filter
 	if params.Resource != "" {
 		resourceFilter := BuildResourceFilter(params.Resource)
 		if resourceFilter != "" {
@@ -65,7 +139,7 @@ func BuildOcCommand(params types.AuditQueryParams) string {
 		}
 	}
 
-	// Add verb filter with comprehensive pattern support
+	// Add verb filter
 	if params.Verb != "" {
 		verbFilter := BuildVerbFilter(params.Verb)
 		if verbFilter != "" {
@@ -73,7 +147,7 @@ func BuildOcCommand(params types.AuditQueryParams) string {
 		}
 	}
 
-	// Add namespace filter with comprehensive pattern support
+	// Add namespace filter
 	if params.Namespace != "" {
 		namespaceFilter := BuildNamespaceFilter(params.Namespace)
 		if namespaceFilter != "" {
@@ -93,8 +167,8 @@ func BuildOcCommand(params types.AuditQueryParams) string {
 		}
 	}
 
-	// Add timeframe filter (only if not using multi-file approach)
-	if params.Timeframe != "" && len(logFiles) <= 1 {
+	// Add timeframe filter for simple commands
+	if params.Timeframe != "" {
 		timeframeFilter := buildTimeframeFilter(params.Timeframe)
 		if timeframeFilter != "" {
 			parts = append(parts, timeframeFilter)
@@ -104,72 +178,272 @@ func BuildOcCommand(params types.AuditQueryParams) string {
 	return strings.Join(parts, " ")
 }
 
-// determineLogFiles determines which log files to query based on timeframe
-func determineLogFiles(logSource, timeframe string) []LogFileInfo {
-	if timeframe == "" {
-		// No timeframe specified, use current log file
-		return []LogFileInfo{
-			{Path: getDefaultLogPath(logSource), IsCurrent: true},
+// buildErrorTolerantMultiFileCommand builds an error-tolerant multi-file command
+func (cb *CommandBuilder) buildErrorTolerantMultiFileCommand(params types.AuditQueryParams) string {
+	// Get available log files
+	logFiles := cb.getAvailableLogFiles(params.LogSource, params.Timeframe)
+
+	if len(logFiles) <= 1 {
+		return cb.buildSimpleCommand(params)
+	}
+
+	var commands []string
+
+	for _, logFile := range logFiles {
+		// Build individual command for this file
+		fileCommand := cb.buildSingleFileCommand(params, logFile)
+
+		// Add error tolerance: continue on failure
+		errorTolerantCommand := fmt.Sprintf("(%s) || true", fileCommand)
+		commands = append(commands, errorTolerantCommand)
+	}
+
+	// Use semicolon instead of && for error tolerance
+	return strings.Join(commands, " ; ")
+}
+
+// buildSingleFileCommand builds a command for a single log file
+func (cb *CommandBuilder) buildSingleFileCommand(params types.AuditQueryParams, logFile types.LogFileInfo) string {
+	var parts []string
+
+	// Base command
+	parts = append(parts, "oc adm node-logs --role=master")
+
+	// Handle path
+	if strings.HasPrefix(logFile.Path, "--path=") {
+		parts = append(parts, logFile.Path)
+	} else {
+		parts = append(parts, fmt.Sprintf("--path=%s", logFile.Path))
+	}
+
+	// Add filters with complexity control
+	if len(params.Patterns) > 0 {
+		maxPatterns := 3
+		if len(params.Patterns) > maxPatterns {
+			params.Patterns = params.Patterns[:maxPatterns]
+		}
+		for _, pattern := range params.Patterns {
+			parts = append(parts, fmt.Sprintf("| grep -i '%s'", pattern))
 		}
 	}
 
-	// Parse timeframe to determine date range
-	startDate, endDate := parseTimeframe(timeframe)
-	if startDate.IsZero() {
-		// Invalid timeframe, fallback to current log file
-		return []LogFileInfo{
-			{Path: getDefaultLogPath(logSource), IsCurrent: true},
+	if params.Username != "" {
+		usernameFilter := BuildUsernameFilter(params.Username)
+		if usernameFilter != "" {
+			parts = append(parts, usernameFilter)
 		}
 	}
 
-	// For "today" and short timeframes, use only current log file
-	now := time.Now()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	// Use single file only for today
-	if startDate.Equal(todayStart) {
-		// Today only, use current log file
-		return []LogFileInfo{
-			{Path: getDefaultLogPath(logSource), IsCurrent: true},
+	if params.Resource != "" {
+		resourceFilter := BuildResourceFilter(params.Resource)
+		if resourceFilter != "" {
+			parts = append(parts, resourceFilter)
 		}
 	}
 
-	// Generate list of log files to check
-	var logFiles []LogFileInfo
+	if params.Verb != "" {
+		verbFilter := BuildVerbFilter(params.Verb)
+		if verbFilter != "" {
+			parts = append(parts, verbFilter)
+		}
+	}
 
-	// Always include current log file
-	logFiles = append(logFiles, LogFileInfo{
-		Path:      getDefaultLogPath(logSource),
-		IsCurrent: true,
-	})
+	if params.Namespace != "" {
+		namespaceFilter := BuildNamespaceFilter(params.Namespace)
+		if namespaceFilter != "" {
+			parts = append(parts, namespaceFilter)
+		}
+	}
 
-	// Add rolling log files based on date range, but limit to prevent complexity
-	currentDate := startDate
-	fileCount := 0
-	maxFiles := 50 // Increased limit to meet test expectations (last week: 8+, last month: 32+)
+	// Add exclusions with complexity control
+	if len(params.Exclude) > 0 {
+		maxExclusions := 3
+		if len(params.Exclude) > maxExclusions {
+			params.Exclude = params.Exclude[:maxExclusions]
+		}
+		for _, exclude := range params.Exclude {
+			parts = append(parts, fmt.Sprintf("| grep -v '%s'", exclude))
+		}
+	}
 
-	for currentDate.Before(endDate) || currentDate.Equal(endDate) {
-		if fileCount >= maxFiles {
-			break // Stop adding files to prevent complexity
+	// Add date-specific timeframe filter for rolling logs
+	if !logFile.IsCurrent && !logFile.Date.IsZero() {
+		dateFilter := fmt.Sprintf("| grep '%s'", logFile.Date.Format("2006-01-02"))
+		parts = append(parts, dateFilter)
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// buildFallbackCommand builds a fallback command when other approaches fail
+func (cb *CommandBuilder) buildFallbackCommand(params types.AuditQueryParams) string {
+	// Use the most reliable approach - single file with current log
+	fallbackParams := params
+	fallbackParams.Timeframe = "" // Force single file approach
+	return cb.buildSimpleCommand(fallbackParams)
+}
+
+// getAvailableLogFiles gets available log files with caching
+func (cb *CommandBuilder) getAvailableLogFiles(logSource, timeframe string) []types.LogFileInfo {
+	// Check cache first
+	if time.Since(cb.Cache.LastCheck) < cb.Cache.TTL {
+		if cached, exists := cb.Cache.Cache[logSource]; exists {
+			return cb.convertToLogFileInfo(cached, timeframe)
+		}
+	}
+
+	// Discover files if enabled
+	var availableFiles []string
+	if cb.Discovery.EnableDiscovery {
+		availableFiles = cb.discoverAvailableLogFiles(logSource)
+	} else {
+		// Use fallback files
+		availableFiles = cb.Discovery.FallbackFiles
+	}
+
+	// Update cache
+	cb.Cache.Cache[logSource] = availableFiles
+	cb.Cache.LastCheck = time.Now()
+
+	return cb.convertToLogFileInfo(availableFiles, timeframe)
+}
+
+// discoverAvailableLogFiles discovers available log files from the cluster
+func (cb *CommandBuilder) discoverAvailableLogFiles(logSource string) []string {
+	// Use oc adm node-logs --list-files to discover available files
+	cmd := exec.Command("oc", "adm", "node-logs", "--role=master", "--list-files")
+	output, err := cmd.Output()
+	if err != nil {
+		// Fallback to known patterns
+		return cb.getDefaultLogPatterns(logSource)
+	}
+
+	// Parse output and filter for audit files
+	var availableFiles []string
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, logSource) && strings.Contains(line, "audit") {
+			availableFiles = append(availableFiles, strings.TrimSpace(line))
+		}
+	}
+
+	// Limit the number of files to check
+	if len(availableFiles) > cb.Discovery.MaxFilesToCheck {
+		availableFiles = availableFiles[:cb.Discovery.MaxFilesToCheck]
+	}
+
+	return availableFiles
+}
+
+// getDefaultLogPatterns returns default log file patterns
+func (cb *CommandBuilder) getDefaultLogPatterns(logSource string) []string {
+	basePath := getLogBasePath(logSource)
+	return []string{
+		fmt.Sprintf("%s.log", basePath),
+		fmt.Sprintf("%s.log.1", basePath),
+		fmt.Sprintf("%s.log.2", basePath),
+	}
+}
+
+// convertToLogFileInfo converts file paths to LogFileInfo structs
+func (cb *CommandBuilder) convertToLogFileInfo(files []string, timeframe string) []types.LogFileInfo {
+	var logFiles []types.LogFileInfo
+
+	for i, file := range files {
+		logFile := types.LogFileInfo{
+			Path:      file,
+			IsCurrent: i == 0, // First file is current
+			Exists:    true,   // Assume exists for now
 		}
 
-		// Generate rolling log file paths for this date
-		rollingFiles := generateRollingLogPaths(logSource, currentDate)
-
-		// Add files but respect the limit
-		for _, file := range rollingFiles {
-			if fileCount >= maxFiles {
-				break
-			}
-			logFiles = append(logFiles, file)
-			fileCount++
+		// Parse date from filename if possible
+		if !logFile.IsCurrent {
+			logFile.Date = cb.parseDateFromFilename(file)
 		}
 
-		// Move to next day
-		currentDate = currentDate.AddDate(0, 0, 1)
+		logFiles = append(logFiles, logFile)
 	}
 
 	return logFiles
+}
+
+// parseDateFromFilename attempts to parse a date from a log filename
+func (cb *CommandBuilder) parseDateFromFilename(filename string) time.Time {
+	// Try to extract date from filename patterns
+	patterns := []string{
+		`(\d{4}-\d{2}-\d{2})`, // YYYY-MM-DD
+		`(\d{8})`,             // YYYYMMDD
+	}
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(filename)
+		if len(matches) > 1 {
+			dateStr := matches[1]
+			if len(dateStr) == 8 {
+				// YYYYMMDD format
+				if date, err := time.Parse("20060102", dateStr); err == nil {
+					return date
+				}
+			} else if len(dateStr) == 10 {
+				// YYYY-MM-DD format
+				if date, err := time.Parse("2006-01-02", dateStr); err == nil {
+					return date
+				}
+			}
+		}
+	}
+
+	return time.Time{} // Return zero time if no date found
+}
+
+// ExecuteCommand executes a command with circuit breaker protection
+func (cb *CommandBuilder) ExecuteCommand(command string) (string, error) {
+	if cb.Circuit.State == types.CircuitStateOpen {
+		return "", fmt.Errorf("circuit breaker is open")
+	}
+
+	// Execute command
+	cmd := exec.Command("bash", "-c", command)
+	output, err := cmd.Output()
+
+	if err != nil {
+		cb.recordFailure()
+		return "", err
+	}
+
+	// Reset circuit breaker on success
+	cb.recordSuccess()
+
+	return string(output), nil
+}
+
+// recordFailure records a failure in the circuit breaker
+func (cb *CommandBuilder) recordFailure() {
+	cb.Circuit.FailureCount++
+	cb.Circuit.LastFailureTime = time.Now()
+
+	if cb.Circuit.FailureCount >= cb.Circuit.FailureThreshold {
+		cb.Circuit.State = types.CircuitStateOpen
+	}
+}
+
+// recordSuccess records a success in the circuit breaker
+func (cb *CommandBuilder) recordSuccess() {
+	cb.Circuit.FailureCount = 0
+	if cb.Circuit.State == types.CircuitStateHalfOpen {
+		cb.Circuit.State = types.CircuitStateClosed
+	}
+}
+
+// determineLogFiles determines which log files to query based on timeframe
+// Updated for Phase 1: Always use simple approach for reliability
+func determineLogFiles(logSource, timeframe string) []LogFileInfo {
+	// Phase 1 fix: Always use simple approach for reliability
+	// This prevents the complex multi-file commands that were causing failures
+	return []LogFileInfo{
+		{Path: getDefaultLogPath(logSource), IsCurrent: true},
+	}
 }
 
 // buildMultiFileCommand builds a command that queries multiple log files
@@ -412,6 +686,10 @@ func parseTimeframe(timeframe string) (time.Time, time.Time) {
 		lastMonth := now.AddDate(0, -1, 0)
 		start := time.Date(lastMonth.Year(), lastMonth.Month(), 1, 0, 0, 0, 0, lastMonth.Location())
 		end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Add(-time.Nanosecond)
+		if end.Before(start) {
+			// Fix for edge case where end is before start
+			end = start.AddDate(0, 1, 0).Add(-time.Nanosecond)
+		}
 		return start, end
 	}
 
