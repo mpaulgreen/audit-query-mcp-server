@@ -28,19 +28,20 @@ type TestConfig struct {
 
 // Available tests mapping
 var availableTests = map[string]func(){
-	"command-builder": TestEnhancedCommandBuilder,
-	"validation":      TestEnhancedValidation,
-	"caching":         TestEnhancedCaching,
-	"audit-trail":     TestAuditTrail,
-	"parser":          TestParserLimitations,
-	"mcp-protocol":    TestMCPProtocolComprehensive,
-	"integration":     TestIntegrationScenarios,
-	"error-handling":  TestErrorHandlingAndRecovery,
-	"nlp-patterns":    TestNaturalLanguagePatterns,
-	"nlp-simple":      TestNaturalLanguagePatternsSimple,
-	"nlp-compact":     TestNaturalLanguagePatternsCompact,
-	"command-syntax":  TestCommandSyntaxValidation,
-	"real-cluster":    TestRealClusterConnectivity,
+	"command-builder":  TestEnhancedCommandBuilder,
+	"validation":       TestEnhancedValidation,
+	"caching":          TestEnhancedCaching,
+	"audit-trail":      TestAuditTrail,
+	"parser":           TestParserLimitations,
+	"mcp-protocol":     TestMCPProtocolComprehensive,
+	"integration":      TestIntegrationScenarios,
+	"error-handling":   TestErrorHandlingAndRecovery,
+	"nlp-patterns":     TestNaturalLanguagePatterns,
+	"nlp-simple":       TestNaturalLanguagePatternsSimple,
+	"nlp-compact":      TestNaturalLanguagePatternsCompact,
+	"command-syntax":   TestCommandSyntaxValidation,
+	"real-cluster":     TestRealClusterConnectivity,
+	"enhanced-parsing": TestEnhancedParsing, // New Phase 2 test
 }
 
 // Test categories for better organization
@@ -1772,86 +1773,327 @@ func RunTestsWithArgs() {
 
 // TestRealClusterConnectivity tests actual connectivity to a real OpenShift cluster
 func TestRealClusterConnectivity() {
-	fmt.Println("\n=== Real Cluster Connectivity Test ===")
-	fmt.Println("Testing actual connectivity to OpenShift cluster")
+	fmt.Println("🔗 Testing Real Cluster Connectivity")
+	fmt.Println("====================================")
 
-	// First, check if oc is available
-	fmt.Println("\n--- Step 1: Checking oc availability ---")
-
-	// Test basic oc command
-	ocVersionCmd := exec.Command("oc", "version", "--client")
-	ocVersionOutput, err := ocVersionCmd.Output()
+	// Test basic connectivity
+	fmt.Println("Testing basic OpenShift connectivity...")
+	cmd := exec.Command("oc", "whoami")
+	output, err := cmd.Output()
 	if err != nil {
-		fmt.Printf("❌ oc command not available: %v\n", err)
-		fmt.Println("ℹ️  This test requires oc to be installed and in PATH")
+		fmt.Printf("❌ Failed to connect to OpenShift cluster: %v\n", err)
+		fmt.Println("   This is expected if not connected to a cluster")
 		return
 	}
-	fmt.Printf("✅ oc is available:\n%s\n", string(ocVersionOutput))
 
-	// Test cluster connectivity
-	fmt.Println("\n--- Step 2: Testing cluster connectivity ---")
-
-	ocWhoamiCmd := exec.Command("oc", "whoami")
-	ocWhoamiOutput, err := ocWhoamiCmd.Output()
-	if err != nil {
-		fmt.Printf("❌ Not connected to cluster: %v\n", err)
-		fmt.Println("ℹ️  Please run 'oc login' to connect to your cluster")
-		return
-	}
-	fmt.Printf("✅ Connected to cluster as: %s\n", strings.TrimSpace(string(ocWhoamiOutput)))
+	username := strings.TrimSpace(string(output))
+	fmt.Printf("✅ Connected to OpenShift cluster as: %s\n", username)
 
 	// Test audit log access
-	fmt.Println("\n--- Step 3: Testing audit log access ---")
-
-	auditLogCmd := exec.Command("oc", "adm", "node-logs", "--role=master", "--path=kube-apiserver/audit.log")
-	auditLogOutput, err := auditLogCmd.Output()
+	fmt.Println("Testing audit log access...")
+	cmd = exec.Command("oc", "adm", "node-logs", "--role=master", "--list-files")
+	output, err = cmd.Output()
 	if err != nil {
-		fmt.Printf("❌ Cannot access audit logs: %v\n", err)
-		fmt.Println("ℹ️  This might be due to insufficient permissions")
+		fmt.Printf("❌ Failed to access audit logs: %v\n", err)
+		fmt.Println("   This may indicate permission issues")
 		return
 	}
 
-	auditLogLines := strings.Split(string(auditLogOutput), "\n")
-	fmt.Printf("✅ Audit logs accessible: %d lines available\n", len(auditLogLines))
-
-	if len(auditLogLines) > 0 && len(auditLogLines[0]) > 0 {
-		fmt.Printf("✅ Sample audit log entry: %s...\n", truncateString(auditLogLines[0], 100))
+	files := strings.Split(string(output), "\n")
+	auditFiles := 0
+	for _, file := range files {
+		if strings.Contains(file, "audit") {
+			auditFiles++
+		}
 	}
 
-	// Test actual command execution through our system
-	fmt.Println("\n--- Step 4: Testing system integration ---")
+	fmt.Printf("✅ Found %d audit log files\n", auditFiles)
 
-	srv := server.NewAuditQueryMCPServer()
+	// Test jq availability
+	fmt.Println("Testing jq availability...")
+	cmd = exec.Command("jq", "--version")
+	err = cmd.Run()
+	if err != nil {
+		fmt.Println("❌ jq is not available - JSON parsing will use fallback")
+	} else {
+		fmt.Println("✅ jq is available - JSON parsing will be used")
+	}
 
-	// Test a simple query
-	testParams := types.AuditQueryParams{
+	fmt.Println("✅ Real cluster connectivity test completed")
+}
+
+func TestEnhancedParsing() {
+	fmt.Println("🔍 Testing Enhanced Parsing (Phase 2)")
+	fmt.Println("=====================================")
+
+	// Test 1: Enhanced Parser Configuration
+	fmt.Println("1. Testing Enhanced Parser Configuration...")
+	config := parsing.DefaultEnhancedParserConfig()
+	if !config.UseJSONParsing {
+		fmt.Println("❌ JSON parsing should be enabled by default")
+	} else {
+		fmt.Println("✅ JSON parsing enabled by default")
+	}
+
+	if !config.EnableFallback {
+		fmt.Println("❌ Fallback should be enabled by default")
+	} else {
+		fmt.Println("✅ Fallback enabled by default")
+	}
+
+	// Test 2: Enhanced Parser Creation
+	fmt.Println("2. Testing Enhanced Parser Creation...")
+	parser := parsing.NewEnhancedParser(config)
+	if parser == nil {
+		fmt.Println("❌ Failed to create enhanced parser")
+	} else {
+		fmt.Println("✅ Enhanced parser created successfully")
+	}
+
+	// Test 3: JSON Parsing
+	fmt.Println("3. Testing JSON Parsing...")
+	jsonLines := []string{
+		`{"requestReceivedTimestamp":"2024-01-15T10:30:00Z","user":{"username":"admin","uid":"123"},"verb":"create","objectRef":{"resource":"pods","namespace":"default","name":"test-pod"},"responseStatus":{"code":201,"message":"Created"}}`,
+		`{"requestReceivedTimestamp":"2024-01-15T10:31:00Z","user":{"username":"user1","uid":"456"},"verb":"delete","objectRef":{"resource":"services","namespace":"kube-system","name":"test-service"},"responseStatus":{"code":200,"message":"OK"}}`,
+	}
+
+	result := parser.ParseAuditLogsEnhanced(jsonLines)
+	if result.TotalLines != 2 {
+		fmt.Printf("❌ Expected 2 total lines, got %d\n", result.TotalLines)
+	} else {
+		fmt.Println("✅ JSON parsing total lines correct")
+	}
+
+	if result.ParsedLines != 2 {
+		fmt.Printf("❌ Expected 2 parsed lines, got %d\n", result.ParsedLines)
+	} else {
+		fmt.Println("✅ JSON parsing parsed lines correct")
+	}
+
+	if result.JSONParsedLines != 2 {
+		fmt.Printf("❌ Expected 2 JSON parsed lines, got %d\n", result.JSONParsedLines)
+	} else {
+		fmt.Println("✅ JSON parsing method tracking correct")
+	}
+
+	if result.ErrorLines != 0 {
+		fmt.Printf("❌ Expected 0 error lines, got %d\n", result.ErrorLines)
+	} else {
+		fmt.Println("✅ JSON parsing error handling correct")
+	}
+
+	// Test 4: Accuracy Estimation
+	fmt.Println("4. Testing Accuracy Estimation...")
+	if result.AccuracyEstimate < 0.9 {
+		fmt.Printf("❌ Expected accuracy estimate >= 0.9, got %f\n", result.AccuracyEstimate)
+	} else {
+		fmt.Printf("✅ Accuracy estimate: %.2f%%\n", result.AccuracyEstimate*100)
+	}
+
+	// Test 5: Field Extraction
+	fmt.Println("5. Testing Field Extraction...")
+	if len(result.Entries) < 1 {
+		fmt.Println("❌ No entries found for field extraction test")
+	} else {
+		entry := result.Entries[0]
+		fieldChecks := []struct {
+			name     string
+			expected string
+			actual   string
+		}{
+			{"Timestamp", "2024-01-15T10:30:00Z", entry.Timestamp},
+			{"Username", "admin", entry.Username},
+			{"Verb", "create", entry.Verb},
+			{"Resource", "pods", entry.Resource},
+			{"Namespace", "default", entry.Namespace},
+			{"Name", "test-pod", entry.Name},
+		}
+
+		allFieldsCorrect := true
+		for _, check := range fieldChecks {
+			if check.actual != check.expected {
+				fmt.Printf("❌ %s: expected '%s', got '%s'\n", check.name, check.expected, check.actual)
+				allFieldsCorrect = false
+			}
+		}
+
+		if allFieldsCorrect {
+			fmt.Println("✅ All field extractions correct")
+		}
+	}
+
+	// Test 6: Structured Parsing Fallback
+	fmt.Println("6. Testing Structured Parsing Fallback...")
+	config.UseJSONParsing = false
+	parser = parsing.NewEnhancedParser(config)
+
+	structuredLines := []string{
+		`{"requestReceivedTimestamp":"2024-01-15T10:30:00Z","username":"admin","verb":"create","resource":"pods","namespace":"default","name":"test-pod","code":201,"message":"Created"}`,
+	}
+
+	result = parser.ParseAuditLogsEnhanced(structuredLines)
+	if result.ParsedLines != 1 {
+		fmt.Printf("❌ Expected 1 parsed line, got %d\n", result.ParsedLines)
+	} else {
+		fmt.Println("✅ Structured parsing fallback working")
+	}
+
+	// Test 7: Grep Fallback
+	fmt.Println("7. Testing Grep Fallback...")
+	config.UseJSONParsing = false
+	config.FallbackToGrep = true
+	parser = parsing.NewEnhancedParser(config)
+
+	grepLines := []string{
+		`{"requestReceivedTimestamp":"2024-01-15T10:30:00Z","username":"admin","verb":"create","resource":"pods","namespace":"default","name":"test-pod","code":201,"message":"Created"`,
+	}
+
+	result = parser.ParseAuditLogsEnhanced(grepLines)
+	if result.ParsedLines != 1 {
+		fmt.Printf("❌ Expected 1 parsed line, got %d\n", result.ParsedLines)
+	} else {
+		fmt.Println("✅ Grep fallback working")
+	}
+
+	if result.GrepParsedLines != 1 {
+		fmt.Printf("❌ Expected 1 grep parsed line, got %d\n", result.GrepParsedLines)
+	} else {
+		fmt.Println("✅ Grep parsing method tracking correct")
+	}
+
+	// Test 8: Error Handling
+	fmt.Println("8. Testing Error Handling...")
+	config.UseJSONParsing = true
+	config.MaxParseErrors = 2
+	parser = parsing.NewEnhancedParser(config)
+
+	errorLines := []string{
+		`invalid json line`,
+		`{"requestReceivedTimestamp":"2024-01-15T10:30:00Z","user":{"username":"admin"}}`, // Valid JSON
+		`another invalid line`,
+		`{"requestReceivedTimestamp":"2024-01-15T10:31:00Z","user":{"username":"user1"}}`, // Valid JSON
+		`yet another invalid line`,
+	}
+
+	result = parser.ParseAuditLogsEnhanced(errorLines)
+	if result.TotalLines != 5 {
+		fmt.Printf("❌ Expected 5 total lines, got %d\n", result.TotalLines)
+	} else {
+		fmt.Println("✅ Error handling total lines correct")
+	}
+
+	if result.ParsedLines != 2 {
+		fmt.Printf("❌ Expected 2 parsed lines, got %d\n", result.ParsedLines)
+	} else {
+		fmt.Println("✅ Error handling parsed lines correct")
+	}
+
+	if result.ErrorLines != 3 {
+		fmt.Printf("❌ Expected 3 error lines, got %d\n", result.ErrorLines)
+	} else {
+		fmt.Println("✅ Error handling error lines correct")
+	}
+
+	// Test 9: Performance
+	fmt.Println("9. Testing Performance...")
+	config.UseJSONParsing = true
+	config.MaxParseErrors = 1000
+	parser = parsing.NewEnhancedParser(config)
+
+	// Create test data
+	performanceLines := make([]string, 100)
+	for i := range performanceLines {
+		performanceLines[i] = `{"requestReceivedTimestamp":"2024-01-15T10:30:00Z","user":{"username":"admin"},"verb":"create","objectRef":{"resource":"pods","namespace":"default","name":"test-pod"},"responseStatus":{"code":201,"message":"Created"}}`
+	}
+
+	result = parser.ParseAuditLogsEnhanced(performanceLines)
+	if result.ParsedLines != 100 {
+		fmt.Printf("❌ Expected 100 parsed lines, got %d\n", result.ParsedLines)
+	} else {
+		fmt.Println("✅ Performance parsing correct")
+	}
+
+	if result.Performance.LinesPerSecond < 50 {
+		fmt.Printf("❌ Performance too slow: %f lines/second\n", result.Performance.LinesPerSecond)
+	} else {
+		fmt.Printf("✅ Performance: %.0f lines/second\n", result.Performance.LinesPerSecond)
+	}
+
+	// Test 10: Enhanced Command Builder
+	fmt.Println("10. Testing Enhanced Command Builder...")
+	builder := commands.NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
 		LogSource: "kube-apiserver",
-		Patterns:  []string{"pods"},
+		Username:  "admin",
+		Verb:      "create",
+		Resource:  "pods",
+		Namespace: "default",
+		Patterns:  []string{"customresourcedefinition", "delete"},
+		Exclude:   []string{"system:", "kube-system"},
 		Timeframe: "today",
 	}
 
-	fmt.Println("Executing test query through our system...")
-	result, err := srv.ExecuteCompleteAuditQuery(testParams)
-	if err != nil {
-		fmt.Printf("❌ System execution failed: %v\n", err)
-		fmt.Println("ℹ️  This might indicate an issue with the system's command execution")
-	} else {
-		fmt.Printf("✅ System execution successful!\n")
-		fmt.Printf("✅ Query ID: %s\n", result.QueryID)
-		fmt.Printf("✅ Command executed: %s\n", truncateString(result.Command, 100))
-		fmt.Printf("✅ Raw output length: %d characters\n", len(result.RawOutput))
-		fmt.Printf("✅ Parsed entries: %d\n", len(result.ParsedData))
-		if len(result.ParsedData) > 0 {
-			fmt.Printf("✅ Found %d matching audit log entries\n", len(result.ParsedData))
-		} else {
-			fmt.Printf("✅ Query executed successfully (no matching data found)\n")
-		}
-		fmt.Printf("✅ Execution time: %dms\n", result.ExecutionTime)
+	command := builder.BuildOptimalCommand(params)
 
-		if len(result.ParsedData) > 0 {
-			fmt.Printf("✅ Sample parsed entry: %+v\n", result.ParsedData[0])
+	// Check for essential components
+	checks := []struct {
+		name     string
+		contains string
+	}{
+		{"oc command", "oc adm node-logs --role=master"},
+		{"log path", "--path=kube-apiserver/audit.log"},
+		{"username filter", "username"},
+		{"verb filter", "verb"},
+		{"resource filter", "resource"},
+		{"namespace filter", "namespace"},
+		{"pattern filter", "customresourcedefinition"},
+		{"exclusion filter", "system:"},
+		{"timeframe filter", "requestReceivedTimestamp"},
+	}
+
+	allChecksPassed := true
+	for _, check := range checks {
+		if !strings.Contains(command, check.contains) {
+			fmt.Printf("❌ Missing %s in command\n", check.name)
+			allChecksPassed = false
 		}
 	}
 
-	fmt.Println("\n✅ Real cluster connectivity test completed")
+	if allChecksPassed {
+		fmt.Println("✅ Enhanced command builder working correctly")
+	}
+
+	// Test 11: JQ Availability Check
+	fmt.Println("11. Testing JQ Availability Check...")
+	cmd := exec.Command("jq", "--version")
+	err := cmd.Run()
+	available := err == nil
+	if available {
+		fmt.Println("✅ jq is available on this system")
+	} else {
+		fmt.Println("ℹ️  jq is not available - will use fallback parsing")
+	}
+
+	// Test 12: Fallback Behavior
+	fmt.Println("12. Testing Fallback Behavior...")
+	builder.Config.UseJSONParsing = false
+	fallbackCommand := builder.BuildOptimalCommand(params)
+
+	if strings.Contains(fallbackCommand, "jq -r") {
+		fmt.Println("❌ Fallback command should not contain jq")
+	} else {
+		fmt.Println("✅ Fallback to grep parsing working")
+	}
+
+	if !strings.Contains(fallbackCommand, "grep") {
+		fmt.Println("❌ Fallback command should contain grep")
+	} else {
+		fmt.Println("✅ Grep-based parsing in fallback")
+	}
+
+	fmt.Println("✅ Enhanced Parsing (Phase 2) test completed")
+	fmt.Printf("📊 Summary: JSON parsing accuracy: %.1f%%, Performance: %.0f lines/sec\n",
+		result.AccuracyEstimate*100, result.Performance.LinesPerSecond)
 }

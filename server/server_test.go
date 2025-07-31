@@ -51,7 +51,7 @@ func TestGetTools(t *testing.T) {
 	}
 }
 
-// TestGenerateAuditQueryWithResult tests query generation
+// TestGenerateAuditQueryWithResult tests command generation
 func TestGenerateAuditQueryWithResult(t *testing.T) {
 	server := NewAuditQueryMCPServer()
 

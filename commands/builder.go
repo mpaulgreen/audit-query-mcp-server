@@ -105,6 +105,11 @@ func (cb *CommandBuilder) shouldUseMultiFile(params types.AuditQueryParams) bool
 
 // buildSimpleCommand builds a simple, reliable command
 func (cb *CommandBuilder) buildSimpleCommand(params types.AuditQueryParams) string {
+	// Check if JSON parsing is enabled and available
+	if cb.Config.UseJSONParsing && cb.checkJQAvailability() {
+		return cb.buildJSONAwareCommand(params)
+	}
+
 	var parts []string
 
 	// Base command
@@ -176,6 +181,196 @@ func (cb *CommandBuilder) buildSimpleCommand(params types.AuditQueryParams) stri
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// buildJSONAwareCommand builds a JSON-aware command using jq for better accuracy
+func (cb *CommandBuilder) buildJSONAwareCommand(params types.AuditQueryParams) string {
+	baseCommand := "oc adm node-logs --role=master " + getDefaultLogPath(params.LogSource)
+
+	// Build jq filters for JSON-aware filtering
+	var jqFilters []string
+
+	// Add username filter
+	if params.Username != "" {
+		escapedUsername := escapeForJQ(params.Username)
+		jqFilters = append(jqFilters, fmt.Sprintf(`(.user.username // .userInfo.username // .impersonatedUser // .requestUser) | test("%s"; "i")`, escapedUsername))
+	}
+
+	// Add verb filter
+	if params.Verb != "" {
+		escapedVerb := escapeForJQ(params.Verb)
+		jqFilters = append(jqFilters, fmt.Sprintf(`.verb | test("%s"; "i")`, escapedVerb))
+	}
+
+	// Add resource filter
+	if params.Resource != "" {
+		escapedResource := escapeForJQ(params.Resource)
+		jqFilters = append(jqFilters, fmt.Sprintf(`(.objectRef.resource // .objectRef.apiVersion // .requestObject.kind // .responseObject.kind) | test("%s"; "i")`, escapedResource))
+	}
+
+	// Add namespace filter
+	if params.Namespace != "" {
+		escapedNamespace := escapeForJQ(params.Namespace)
+		jqFilters = append(jqFilters, fmt.Sprintf(`(.objectRef.namespace // .requestObject.metadata.namespace // .responseObject.metadata.namespace) | test("%s"; "i")`, escapedNamespace))
+	}
+
+	// Add pattern filters
+	if len(params.Patterns) > 0 {
+		maxPatterns := 3
+		if len(params.Patterns) > maxPatterns {
+			params.Patterns = params.Patterns[:maxPatterns]
+		}
+		for _, pattern := range params.Patterns {
+			escapedPattern := escapeForJQ(pattern)
+			jqFilters = append(jqFilters, fmt.Sprintf(`tostring | test("%s"; "i")`, escapedPattern))
+		}
+	}
+
+	// Add exclusion filters
+	if len(params.Exclude) > 0 {
+		maxExclusions := 3
+		if len(params.Exclude) > maxExclusions {
+			params.Exclude = params.Exclude[:maxExclusions]
+		}
+		for _, exclude := range params.Exclude {
+			escapedExclude := escapeForJQ(exclude)
+			jqFilters = append(jqFilters, fmt.Sprintf(`(tostring | test("%s"; "i") | not)`, escapedExclude))
+		}
+	}
+
+	// Add timeframe filter
+	if params.Timeframe != "" {
+		timeframeFilter := buildJSONTimeframeFilter(params.Timeframe)
+		if timeframeFilter != "" {
+			jqFilters = append(jqFilters, timeframeFilter)
+		}
+	}
+
+	// Build the complete jq expression
+	var jqExpression string
+	if len(jqFilters) > 0 {
+		jqExpression = fmt.Sprintf(`select(%s)`, strings.Join(jqFilters, " and "))
+	} else {
+		jqExpression = "."
+	}
+
+	// Add output formatting for better readability
+	jqExpression += ` | {
+		timestamp: .requestReceivedTimestamp,
+		username: (.user.username // .userInfo.username // "unknown"),
+		verb: .verb,
+		resource: (.objectRef.resource // "unknown"),
+		namespace: (.objectRef.namespace // "unknown"),
+		name: (.objectRef.name // "unknown"),
+		statusCode: (.responseStatus.code // 0),
+		statusMessage: (.responseStatus.message // ""),
+		requestURI: .requestURI,
+		userAgent: .userAgent,
+		sourceIPs: (.sourceIPs // [])
+	}`
+
+	return fmt.Sprintf("%s | jq -r '%s'", baseCommand, jqExpression)
+}
+
+// buildJSONTimeframeFilter creates a JSON-aware timeframe filter
+func buildJSONTimeframeFilter(timeframe string) string {
+	now := time.Now()
+
+	switch timeframe {
+	case "today":
+		today := now.Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, today)
+	case "yesterday":
+		yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, yesterday)
+	case "this week":
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, now.Format("2006-01-02"))
+	case "last hour":
+		lastHour := now.Add(-1 * time.Hour).Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, lastHour)
+	case "24h", "last 24 hours":
+		last24h := now.AddDate(0, 0, -1).Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, last24h)
+	case "7d", "last 7 days":
+		last7d := now.AddDate(0, 0, -7).Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, last7d)
+	case "last week":
+		lastWeek := now.AddDate(0, 0, -7).Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, lastWeek)
+	case "this month":
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, now.Format("2006-01"))
+	case "last month":
+		lastMonth := now.AddDate(0, -1, 0).Format("2006-01")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, lastMonth)
+	case "last 30 days":
+		last30d := now.AddDate(0, 0, -30).Format("2006-01-02")
+		return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, last30d)
+	}
+
+	// Handle "last X minutes/hours/days" patterns
+	if matched, _ := regexp.MatchString(`^last (\d+) minute(s)?$`, timeframe); matched {
+		re := regexp.MustCompile(`^last (\d+) minute(s)?$`)
+		matches := re.FindStringSubmatch(timeframe)
+		if len(matches) > 1 {
+			minutes, _ := strconv.Atoi(matches[1])
+			lastMinutes := now.Add(-time.Duration(minutes) * time.Minute).Format("2006-01-02")
+			return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, lastMinutes)
+		}
+	}
+
+	if matched, _ := regexp.MatchString(`^last (\d+) hour(s)?$`, timeframe); matched {
+		re := regexp.MustCompile(`^last (\d+) hour(s)?$`)
+		matches := re.FindStringSubmatch(timeframe)
+		if len(matches) > 1 {
+			hours, _ := strconv.Atoi(matches[1])
+			lastHours := now.Add(-time.Duration(hours) * time.Hour).Format("2006-01-02")
+			return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, lastHours)
+		}
+	}
+
+	if matched, _ := regexp.MatchString(`^last (\d+) day(s)?$`, timeframe); matched {
+		re := regexp.MustCompile(`^last (\d+) day(s)?$`)
+		matches := re.FindStringSubmatch(timeframe)
+		if len(matches) > 1 {
+			days, _ := strconv.Atoi(matches[1])
+			lastDays := now.AddDate(0, 0, -days).Format("2006-01-02")
+			return fmt.Sprintf(`.requestReceivedTimestamp | test("%s")`, lastDays)
+		}
+	}
+
+	return ""
+}
+
+// checkJQAvailability checks if jq is available in the system
+func (cb *CommandBuilder) checkJQAvailability() bool {
+	cmd := exec.Command("jq", "--version")
+	err := cmd.Run()
+	return err == nil
+}
+
+// escapeForJQ escapes special characters for safe jq usage
+func escapeForJQ(input string) string {
+	// Escape special jq characters: " \ / [ ] { } ( ) * + ? | ^ $ . ~
+	escaped := input
+	escaped = strings.ReplaceAll(escaped, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+	escaped = strings.ReplaceAll(escaped, "/", "\\/")
+	escaped = strings.ReplaceAll(escaped, "[", "\\[")
+	escaped = strings.ReplaceAll(escaped, "]", "\\]")
+	escaped = strings.ReplaceAll(escaped, "{", "\\{")
+	escaped = strings.ReplaceAll(escaped, "}", "\\}")
+	escaped = strings.ReplaceAll(escaped, "(", "\\(")
+	escaped = strings.ReplaceAll(escaped, ")", "\\)")
+	escaped = strings.ReplaceAll(escaped, "*", "\\*")
+	escaped = strings.ReplaceAll(escaped, "+", "\\+")
+	escaped = strings.ReplaceAll(escaped, "?", "\\?")
+	escaped = strings.ReplaceAll(escaped, "|", "\\|")
+	escaped = strings.ReplaceAll(escaped, "^", "\\^")
+	escaped = strings.ReplaceAll(escaped, "$", "\\$")
+	escaped = strings.ReplaceAll(escaped, ".", "\\.")
+	escaped = strings.ReplaceAll(escaped, "~", "\\~")
+
+	return escaped
 }
 
 // buildErrorTolerantMultiFileCommand builds an error-tolerant multi-file command

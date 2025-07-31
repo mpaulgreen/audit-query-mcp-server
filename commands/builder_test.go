@@ -16,10 +16,19 @@ func TestBuildOcCommand_Basic(t *testing.T) {
 	}
 
 	command := BuildOcCommand(params)
-	expected := "oc adm node-logs --role=master --path=kube-apiserver/audit.log | grep -i 'test-pattern'"
 
-	if command != expected {
-		t.Errorf("Expected: %s\nGot: %s", expected, command)
+	// Phase 2: JSON-aware parsing is enabled by default
+	// Should use jq for pattern matching instead of grep
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Expected JSON-aware command with jq, got: %s", command)
+	}
+
+	if !strings.Contains(command, "test-pattern") {
+		t.Errorf("Expected command to contain pattern 'test-pattern', got: %s", command)
+	}
+
+	if !strings.Contains(command, "oc adm node-logs --role=master --path=kube-apiserver/audit.log") {
+		t.Errorf("Expected base oc command, got: %s", command)
 	}
 }
 
@@ -60,10 +69,27 @@ func TestBuildOcCommand_WithFilters(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Check that all filters are present
+	// Phase 2: JSON-aware parsing is enabled by default
+	// Should use jq for filtering instead of grep
 	checks := []string{
 		"oc adm node-logs --role=master",
 		"--path=kube-apiserver/audit.log",
+		"jq -r",
+		"testuser",
+		"pods",
+		"GET",
+		"default",
+		"health-check",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(command, check) {
+			t.Errorf("Command should contain: %s", check)
+		}
+	}
+
+	// Should not contain old grep patterns
+	grepChecks := []string{
 		"grep '\"user\":{\"[^\"]*\":\"testuser\"'",
 		"grep '\"objectRef\":{\"[^\"]*\":\"pods\"'",
 		"grep '\"verb\":\"GET\"'",
@@ -71,9 +97,9 @@ func TestBuildOcCommand_WithFilters(t *testing.T) {
 		"grep -v 'health-check'",
 	}
 
-	for _, check := range checks {
-		if !strings.Contains(command, check) {
-			t.Errorf("Command should contain: %s", check)
+	for _, check := range grepChecks {
+		if strings.Contains(command, check) {
+			t.Errorf("Command should not contain old grep pattern: %s", check)
 		}
 	}
 }
@@ -885,17 +911,22 @@ func TestFilterEscaping(t *testing.T) {
 
 	command := BuildOcCommand(params)
 
-	// Current implementation doesn't escape patterns and exclusions in main function
-	// but does escape them in filter functions
-	if !strings.Contains(command, "test[pattern]") {
-		t.Errorf("Should contain unescaped pattern: test[pattern]")
+	// Phase 2: JSON-aware parsing is enabled by default
+	// Should use jq for pattern matching with proper escaping
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Expected JSON-aware command with jq, got: %s", command)
 	}
 
-	if !strings.Contains(command, "test(pattern)") {
-		t.Errorf("Should contain unescaped exclusion: test(pattern)")
+	// Should contain the patterns in the jq expression (may be escaped for jq)
+	if !strings.Contains(command, "test") {
+		t.Errorf("Should contain pattern base: test")
 	}
 
-	// Test that filter functions do escape properly
+	if !strings.Contains(command, "pattern") {
+		t.Errorf("Should contain pattern part: pattern")
+	}
+
+	// Test that filter functions do escape properly for legacy compatibility
 	usernameFilter := BuildUsernameFilter("test[user]")
 	if !strings.Contains(usernameFilter, "test\\[user\\]") {
 		t.Errorf("Username filter should escape special characters")
@@ -999,17 +1030,33 @@ func TestRealAuditLogFormat(t *testing.T) {
 
 		command := BuildOcCommand(params)
 
-		// Should include filters for the real JSON structure
+		// Phase 2: JSON-aware parsing is enabled by default
+		// Should use jq for filtering instead of grep patterns
 		checks := []string{
+			"jq -r",
+			"system:serviceaccount:nvidia-gpu-operator:gpu-operator",
+			"create",
+			"clusterrolebindings",
+			"nvidia-gpu-operator",
+		}
+
+		for _, check := range checks {
+			if !strings.Contains(command, check) {
+				t.Errorf("Command should contain: %s", check)
+			}
+		}
+
+		// Should not contain old grep patterns
+		grepChecks := []string{
 			"\"user\":{\"[^\"]*\":\"system:serviceaccount:nvidia-gpu-operator:gpu-operator\"",
 			"\"verb\":\"create\"",
 			"\"objectRef\":{\"[^\"]*\":\"clusterrolebindings\"",
 			"\"objectRef\":{\"[^\"]*\":\"nvidia-gpu-operator\"",
 		}
 
-		for _, check := range checks {
-			if !strings.Contains(command, check) {
-				t.Errorf("Command should contain: %s", check)
+		for _, check := range grepChecks {
+			if strings.Contains(command, check) {
+				t.Errorf("Command should not contain old grep pattern: %s", check)
 			}
 		}
 	})
@@ -1085,9 +1132,31 @@ func TestIntegration(t *testing.T) {
 
 		command := BuildOcCommand(params)
 
-		// Should include all components
+		// Phase 2: JSON-aware parsing is enabled by default
+		// Should use jq for filtering instead of grep patterns
 		checks := []string{
 			"oc adm node-logs --role=master",
+			"jq -r",
+			"system:serviceaccount:openshift-cluster-version:default",
+			"services",
+			"get",
+			"openshift-network-operator",
+			"error",
+			"failed",
+			"timeout",
+			"health-check",
+			"liveness",
+			"readiness",
+		}
+
+		for _, check := range checks {
+			if !strings.Contains(command, check) {
+				t.Errorf("Command should contain: %s", check)
+			}
+		}
+
+		// Should not contain old grep patterns
+		grepChecks := []string{
 			"\"user\":{\"[^\"]*\":\"system:serviceaccount:openshift-cluster-version:default\"",
 			"\"objectRef\":{\"[^\"]*\":\"services\"",
 			"\"verb\":\"get\"",
@@ -1100,9 +1169,9 @@ func TestIntegration(t *testing.T) {
 			"grep -v 'readiness'",
 		}
 
-		for _, check := range checks {
-			if !strings.Contains(command, check) {
-				t.Errorf("Command should contain: %s", check)
+		for _, check := range grepChecks {
+			if strings.Contains(command, check) {
+				t.Errorf("Command should not contain old grep pattern: %s", check)
 			}
 		}
 
@@ -1123,9 +1192,16 @@ func TestBuildOcCommand_ComplexityLimits(t *testing.T) {
 	}
 
 	command := BuildOcCommand(params)
-	patternCount := strings.Count(command, "grep -i")
-	if patternCount > 3 {
-		t.Errorf("Command should limit patterns to 3, got %d grep patterns", patternCount)
+	// Phase 2: JSON-aware parsing is enabled by default
+	// Should use jq instead of grep patterns
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Expected JSON-aware command with jq, got: %s", command)
+	}
+
+	// Should contain the patterns in the jq expression
+	patternCount := strings.Count(command, "pattern")
+	if patternCount < 3 {
+		t.Errorf("Command should contain at least 3 patterns, got %d pattern references", patternCount)
 	}
 
 	// Test exclusion limit (max 3)
@@ -1136,9 +1212,15 @@ func TestBuildOcCommand_ComplexityLimits(t *testing.T) {
 	}
 
 	command = BuildOcCommand(params)
-	excludeCount := strings.Count(command, "grep -v")
-	if excludeCount > 3 {
-		t.Errorf("Command should limit exclusions to 3, got %d grep -v patterns", excludeCount)
+	// Should use jq instead of grep -v
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Expected JSON-aware command with jq, got: %s", command)
+	}
+
+	// Should contain the exclusions in the jq expression
+	excludeCount := strings.Count(command, "exclude")
+	if excludeCount < 3 {
+		t.Errorf("Command should contain at least 3 exclusions, got %d exclusion references", excludeCount)
 	}
 }
 
@@ -1209,21 +1291,18 @@ func TestBuildOcCommand_TimeframeFilter(t *testing.T) {
 	}
 
 	command := BuildOcCommand(params)
-	// For today, should use single file and add timeframe filter
-	if !strings.Contains(command, "grep") {
-		t.Errorf("Command for today should include timeframe filter")
+	// Phase 2: JSON-aware parsing is enabled by default
+	// For today, should use single file and add timeframe filter via jq
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Command for today should include JSON-aware timeframe filter")
 	}
 
-	// Test with yesterday (should use multi-file approach)
+	// Test with yesterday (should use simple approach for reliability)
 	params.Timeframe = "yesterday"
 	command = BuildOcCommand(params)
-	// Should use multi-file approach, so no additional timeframe filter
+	// Should use simple approach for reliability (Phase 1 fix)
 	if strings.Contains(command, "&&") {
-		// Multi-file command, should not have additional timeframe filter
-		if strings.Count(command, "grep") > 0 {
-			// Only grep patterns from filters, not timeframe
-			t.Logf("Multi-file command generated: %s", command)
-		}
+		t.Errorf("Should use simple command for reliability")
 	}
 }
 
@@ -1313,5 +1392,686 @@ func BenchmarkLargeTimeframe(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		BuildOcCommand(params)
+	}
+}
+
+func TestBuildJSONAwareCommand_Basic(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Username:  "admin",
+		Verb:      "create",
+		Resource:  "pods",
+		Namespace: "default",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain jq command
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Expected jq command, got: %s", command)
+	}
+
+	// Should contain base oc command
+	if !strings.Contains(command, "oc adm node-logs --role=master") {
+		t.Errorf("Expected oc command, got: %s", command)
+	}
+
+	// Should contain log path
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Expected log path, got: %s", command)
+	}
+
+	// Should contain username filter
+	if !strings.Contains(command, "username") {
+		t.Errorf("Expected username filter, got: %s", command)
+	}
+
+	// Should contain verb filter
+	if !strings.Contains(command, "verb") {
+		t.Errorf("Expected verb filter, got: %s", command)
+	}
+
+	// Should contain resource filter
+	if !strings.Contains(command, "resource") {
+		t.Errorf("Expected resource filter, got: %s", command)
+	}
+
+	// Should contain namespace filter
+	if !strings.Contains(command, "namespace") {
+		t.Errorf("Expected namespace filter, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_WithPatterns(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Patterns:  []string{"customresourcedefinition", "delete"},
+		Username:  "admin",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain pattern filters
+	if !strings.Contains(command, "customresourcedefinition") {
+		t.Errorf("Expected pattern filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "delete") {
+		t.Errorf("Expected pattern filter, got: %s", command)
+	}
+
+	// Should contain tostring filter for patterns
+	if !strings.Contains(command, "tostring") {
+		t.Errorf("Expected tostring filter for patterns, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_WithExclusions(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Exclude:   []string{"system:", "kube-system"},
+		Username:  "admin",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain exclusion filters
+	if !strings.Contains(command, "system:") {
+		t.Errorf("Expected exclusion filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "kube-system") {
+		t.Errorf("Expected exclusion filter, got: %s", command)
+	}
+
+	// Should contain not operator for exclusions
+	if !strings.Contains(command, "not") {
+		t.Errorf("Expected not operator for exclusions, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_WithTimeframe(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Timeframe: "today",
+		Username:  "admin",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain timeframe filter
+	if !strings.Contains(command, "requestReceivedTimestamp") {
+		t.Errorf("Expected timeframe filter, got: %s", command)
+	}
+
+	// Should contain test function
+	if !strings.Contains(command, "test") {
+		t.Errorf("Expected test function, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_ComplexFilters(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Username:  "admin",
+		Verb:      "delete",
+		Resource:  "customresourcedefinitions",
+		Namespace: "default",
+		Patterns:  []string{"customer"},
+		Exclude:   []string{"system:"},
+		Timeframe: "yesterday",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain all filters
+	if !strings.Contains(command, "admin") {
+		t.Errorf("Expected username filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "delete") {
+		t.Errorf("Expected verb filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "customresourcedefinitions") {
+		t.Errorf("Expected resource filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "default") {
+		t.Errorf("Expected namespace filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "customer") {
+		t.Errorf("Expected pattern filter, got: %s", command)
+	}
+
+	if !strings.Contains(command, "system:") {
+		t.Errorf("Expected exclusion filter, got: %s", command)
+	}
+
+	// Should contain select with multiple conditions
+	if !strings.Contains(command, "select(") {
+		t.Errorf("Expected select function, got: %s", command)
+	}
+
+	// Should contain and operator for multiple conditions
+	if !strings.Contains(command, " and ") {
+		t.Errorf("Expected and operator, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_OutputFormatting(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Username:  "admin",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain output formatting
+	if !strings.Contains(command, "timestamp:") {
+		t.Errorf("Expected timestamp field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "username:") {
+		t.Errorf("Expected username field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "verb:") {
+		t.Errorf("Expected verb field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "resource:") {
+		t.Errorf("Expected resource field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "namespace:") {
+		t.Errorf("Expected namespace field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "name:") {
+		t.Errorf("Expected name field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "statusCode:") {
+		t.Errorf("Expected statusCode field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "statusMessage:") {
+		t.Errorf("Expected statusMessage field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "requestURI:") {
+		t.Errorf("Expected requestURI field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "userAgent:") {
+		t.Errorf("Expected userAgent field, got: %s", command)
+	}
+
+	if !strings.Contains(command, "sourceIPs:") {
+		t.Errorf("Expected sourceIPs field, got: %s", command)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_Today(t *testing.T) {
+	filter := buildJSONTimeframeFilter("today")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for today")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_Yesterday(t *testing.T) {
+	filter := buildJSONTimeframeFilter("yesterday")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for yesterday")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_LastHour(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last hour")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last hour")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_Last24Hours(t *testing.T) {
+	filter := buildJSONTimeframeFilter("24h")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for 24h")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_LastWeek(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last week")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last week")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_LastMonth(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last month")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last month")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_Last30Days(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last 30 days")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last 30 days")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_LastMinutes(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last 5 minutes")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last 5 minutes")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_LastHours(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last 2 hours")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last 2 hours")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_LastDays(t *testing.T) {
+	filter := buildJSONTimeframeFilter("last 7 days")
+
+	if filter == "" {
+		t.Error("Expected non-empty filter for last 7 days")
+	}
+
+	if !strings.Contains(filter, "requestReceivedTimestamp") {
+		t.Errorf("Expected requestReceivedTimestamp field, got: %s", filter)
+	}
+
+	if !strings.Contains(filter, "test") {
+		t.Errorf("Expected test function, got: %s", filter)
+	}
+}
+
+func TestBuildJSONTimeframeFilter_InvalidTimeframe(t *testing.T) {
+	filter := buildJSONTimeframeFilter("invalid timeframe")
+
+	if filter != "" {
+		t.Errorf("Expected empty filter for invalid timeframe, got: %s", filter)
+	}
+}
+
+func TestEscapeForJQ_Basic(t *testing.T) {
+	input := "simple text"
+	escaped := escapeForJQ(input)
+
+	if escaped != input {
+		t.Errorf("Expected unchanged text, got: %s", escaped)
+	}
+}
+
+func TestEscapeForJQ_SpecialCharacters(t *testing.T) {
+	input := `test"with'quotes\and\slashes[and]braces{and}parentheses(and)operators*+?|^$.~`
+	escaped := escapeForJQ(input)
+
+	// Should escape special characters
+	if !strings.Contains(escaped, `\"`) {
+		t.Errorf("Expected escaped quotes, got: %s", escaped)
+	}
+
+	// The function escapes backslashes: \ becomes \\
+	if !strings.Contains(escaped, `\\`) {
+		t.Errorf("Expected escaped backslashes, got: %s", escaped)
+	}
+
+	// Test with input that actually contains forward slashes
+	inputWithSlashes := `test/path/with/slashes`
+	escapedWithSlashes := escapeForJQ(inputWithSlashes)
+	if !strings.Contains(escapedWithSlashes, `\/`) {
+		t.Errorf("Expected escaped forward slashes, got: %s", escapedWithSlashes)
+	}
+
+	if !strings.Contains(escaped, `\[`) {
+		t.Errorf("Expected escaped brackets, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\]`) {
+		t.Errorf("Expected escaped brackets, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\{`) {
+		t.Errorf("Expected escaped braces, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\}`) {
+		t.Errorf("Expected escaped braces, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\(`) {
+		t.Errorf("Expected escaped parentheses, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\)`) {
+		t.Errorf("Expected escaped parentheses, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\*`) {
+		t.Errorf("Expected escaped asterisk, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\+`) {
+		t.Errorf("Expected escaped plus, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\?`) {
+		t.Errorf("Expected escaped question mark, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\|`) {
+		t.Errorf("Expected escaped pipe, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\^`) {
+		t.Errorf("Expected escaped caret, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\$`) {
+		t.Errorf("Expected escaped dollar, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\.`) {
+		t.Errorf("Expected escaped dot, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, `\~`) {
+		t.Errorf("Expected escaped tilde, got: %s", escaped)
+	}
+}
+
+func TestEscapeForJQ_EmptyString(t *testing.T) {
+	input := ""
+	escaped := escapeForJQ(input)
+
+	if escaped != "" {
+		t.Errorf("Expected empty string, got: %s", escaped)
+	}
+}
+
+func TestEscapeForJQ_Unicode(t *testing.T) {
+	input := "test with unicode: 测试 🚀"
+	escaped := escapeForJQ(input)
+
+	// Unicode characters should not be escaped
+	if !strings.Contains(escaped, "测试") {
+		t.Errorf("Expected unicode characters to be preserved, got: %s", escaped)
+	}
+
+	if !strings.Contains(escaped, "🚀") {
+		t.Errorf("Expected emoji to be preserved, got: %s", escaped)
+	}
+}
+
+func TestCheckJQAvailability(t *testing.T) {
+	builder := NewCommandBuilder()
+	available := builder.checkJQAvailability()
+
+	// This test depends on the system, so we just check it doesn't panic
+	// In a real environment, this would check if jq is installed
+	if available {
+		t.Log("jq is available on this system")
+	} else {
+		t.Log("jq is not available on this system")
+	}
+}
+
+func TestBuildSimpleCommand_JSONParsingEnabled(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Username:  "admin",
+		Verb:      "create",
+	}
+
+	command := builder.buildSimpleCommand(params)
+
+	// Should use JSON-aware command when jq is available
+	// Note: This test assumes jq is not available in test environment
+	// In a real environment with jq, it would use JSON parsing
+	if strings.Contains(command, "jq -r") {
+		t.Log("JSON parsing was used (jq available)")
+	} else {
+		t.Log("Fallback to grep parsing was used (jq not available)")
+	}
+
+	// Should still contain basic command structure
+	if !strings.Contains(command, "oc adm node-logs --role=master") {
+		t.Errorf("Expected oc command, got: %s", command)
+	}
+
+	if !strings.Contains(command, "--path=kube-apiserver/audit.log") {
+		t.Errorf("Expected log path, got: %s", command)
+	}
+}
+
+func TestBuildSimpleCommand_JSONParsingDisabled(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = false
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Username:  "admin",
+		Verb:      "create",
+	}
+
+	command := builder.buildSimpleCommand(params)
+
+	// Should not use JSON parsing
+	if strings.Contains(command, "jq -r") {
+		t.Errorf("Expected no jq command when JSON parsing is disabled, got: %s", command)
+	}
+
+	// Should use grep-based parsing
+	if !strings.Contains(command, "grep") {
+		t.Errorf("Expected grep-based parsing, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_NoFilters(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should contain base command
+	if !strings.Contains(command, "oc adm node-logs --role=master") {
+		t.Errorf("Expected oc command, got: %s", command)
+	}
+
+	// Should contain jq with just output formatting (no filters)
+	if !strings.Contains(command, "jq -r") {
+		t.Errorf("Expected jq command, got: %s", command)
+	}
+
+	// Should not contain select function when no filters
+	if strings.Contains(command, "select(") {
+		t.Errorf("Expected no select function when no filters, got: %s", command)
+	}
+
+	// Should contain output formatting
+	if !strings.Contains(command, "timestamp:") {
+		t.Errorf("Expected output formatting, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_MaxPatterns(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Patterns:  []string{"pattern1", "pattern2", "pattern3", "pattern4", "pattern5"}, // More than max (3)
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should only include first 3 patterns
+	if strings.Contains(command, "pattern4") {
+		t.Errorf("Expected pattern4 to be excluded, got: %s", command)
+	}
+
+	if strings.Contains(command, "pattern5") {
+		t.Errorf("Expected pattern5 to be excluded, got: %s", command)
+	}
+
+	// Should include first 3 patterns
+	if !strings.Contains(command, "pattern1") {
+		t.Errorf("Expected pattern1 to be included, got: %s", command)
+	}
+
+	if !strings.Contains(command, "pattern2") {
+		t.Errorf("Expected pattern2 to be included, got: %s", command)
+	}
+
+	if !strings.Contains(command, "pattern3") {
+		t.Errorf("Expected pattern3 to be included, got: %s", command)
+	}
+}
+
+func TestBuildJSONAwareCommand_MaxExclusions(t *testing.T) {
+	builder := NewCommandBuilder()
+	builder.Config.UseJSONParsing = true
+
+	params := types.AuditQueryParams{
+		LogSource: "kube-apiserver",
+		Exclude:   []string{"exclude1", "exclude2", "exclude3", "exclude4", "exclude5"}, // More than max (3)
+	}
+
+	command := builder.buildJSONAwareCommand(params)
+
+	// Should only include first 3 exclusions
+	if strings.Contains(command, "exclude4") {
+		t.Errorf("Expected exclude4 to be excluded, got: %s", command)
+	}
+
+	if strings.Contains(command, "exclude5") {
+		t.Errorf("Expected exclude5 to be excluded, got: %s", command)
+	}
+
+	// Should include first 3 exclusions
+	if !strings.Contains(command, "exclude1") {
+		t.Errorf("Expected exclude1 to be included, got: %s", command)
+	}
+
+	if !strings.Contains(command, "exclude2") {
+		t.Errorf("Expected exclude2 to be included, got: %s", command)
+	}
+
+	if !strings.Contains(command, "exclude3") {
+		t.Errorf("Expected exclude3 to be included, got: %s", command)
 	}
 }

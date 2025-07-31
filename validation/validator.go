@@ -66,13 +66,19 @@ func ValidateQueryParams(params types.AuditQueryParams) error {
 
 // ValidateGeneratedCommand performs final safety validation
 func ValidateGeneratedCommand(command string) error {
-	// Check for dangerous commands with whitelist exception for multi-file commands
+	// Check for dangerous commands with whitelist exception for multi-file commands and jq expressions
 	for _, pattern := range utils.DangerousPatterns {
 		if strings.Contains(command, pattern) {
 			// Check if this is a safe multi-file command pattern
 			if isSafeMultiFileCommand(command, pattern) {
 				continue // Allow this specific pattern
 			}
+
+			// Check if this is a safe jq expression (jq uses semicolons in test() function)
+			if pattern == ";" && isSafeJQExpression(command) {
+				continue // Allow semicolons in jq expressions
+			}
+
 			return fmt.Errorf("command contains dangerous pattern: %s", pattern)
 		}
 	}
@@ -137,6 +143,42 @@ func isSafeMultiFileCommand(command, dangerousPattern string) bool {
 	}
 
 	return true
+}
+
+// isSafeJQExpression checks if a semicolon is part of a safe jq expression
+func isSafeJQExpression(command string) bool {
+	// Check if the command contains jq and the semicolon is in a jq expression
+	if !strings.Contains(command, "jq") {
+		return false
+	}
+
+	// Look for jq test() function patterns with semicolons
+	jqTestPatterns := []string{
+		`test(".*"; ".*")`,
+		`test\([^)]*;[^)]*\)`,
+	}
+
+	for _, pattern := range jqTestPatterns {
+		matched, _ := regexp.MatchString(pattern, command)
+		if matched {
+			return true
+		}
+	}
+
+	// Also check for jq pipe operations that might contain semicolons
+	if strings.Contains(command, "| jq") || strings.Contains(command, "jq -r") {
+		// Extract the jq expression part
+		parts := strings.Split(command, "jq")
+		if len(parts) > 1 {
+			jqPart := parts[1]
+			// Check if semicolon is within quotes (jq string literals)
+			if strings.Contains(jqPart, `"; "`) || strings.Contains(jqPart, `'; '`) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // isSafeOcAdmNodeLogsCommand validates if a command is a safe oc adm node-logs command

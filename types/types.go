@@ -215,7 +215,7 @@ func DefaultAuditQueryConfig() AuditQueryConfig {
 	return AuditQueryConfig{
 		MaxRotatedFiles:      3,
 		CommandTimeout:       30 * time.Second,
-		UseJSONParsing:       false,
+		UseJSONParsing:       true, // Phase 2: Enable JSON parsing by default
 		EnableCompression:    false,
 		ParallelProcessing:   false,
 		ForceSimple:          true, // Default to simple for reliability
